@@ -3,7 +3,7 @@ package compresor
 import (
 	"fmt"
 
-	"github.com/cbiale/sensorwave/tipos"
+	"github.com/sensorwave-dev/sensorwave/tipos"
 )
 
 // DescomprimirBloqueSerie descomprime un bloque de datos de serie temporal.

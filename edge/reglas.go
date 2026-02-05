@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cbiale/sensorwave/tipos"
 	"github.com/cockroachdb/pebble"
+	"github.com/sensorwave-dev/sensorwave/tipos"
 )
 
 type TipoOperador string

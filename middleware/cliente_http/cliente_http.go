@@ -8,10 +8,11 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 
-	"github.com/cbiale/sensorwave/middleware"
+	"github.com/sensorwave-dev/sensorwave/middleware"
 )
 
 type ClienteHTTP struct {
@@ -60,7 +61,7 @@ func (c *ClienteHTTP) Publicar(topico string, payload interface{}) {
 	}
 
 	// Realizar la solicitud POST
-	url := fmt.Sprintf("%s%s", c.BaseURL, ruta)
+	url := fmt.Sprintf("%s%s?topico=%s", c.BaseURL, ruta, url.QueryEscape(topico))
 	resp, err := c.Cliente.Post(url, "application/json", bytes.NewReader(mensajeBytes))
 	if err != nil {
 		log.Fatalf("Error al realizar el POST: %v", err)
@@ -76,7 +77,7 @@ func (c *ClienteHTTP) Publicar(topico string, payload interface{}) {
 
 func (c *ClienteHTTP) Suscribir(topico string, callback middleware.CallbackFunc) {
 	go func() {
-		url := fmt.Sprintf("%s%s?topico=%s", c.BaseURL, ruta, topico)
+		url := fmt.Sprintf("%s%s?topico=%s", c.BaseURL, ruta, url.QueryEscape(topico))
 		resp, err := c.Cliente.Get(url)
 		if err != nil {
 			log.Fatalf("Error al realizar el GET: %v", err)
@@ -129,7 +130,7 @@ func (c *ClienteHTTP) Desuscribir(topico string) {
 		return
 	}
 
-	url := fmt.Sprintf("%s%s?topico=%s&clienteID=%s", c.BaseURL, ruta, topico, clienteID)
+	url := fmt.Sprintf("%s%s?topico=%s&clienteID=%s", c.BaseURL, ruta, url.QueryEscape(topico), url.QueryEscape(clienteID))
 	req, err := http.NewRequest("DELETE", url, nil)
 	if err != nil {
 		log.Fatalf("Error al crear la solicitud DELETE: %v", err)

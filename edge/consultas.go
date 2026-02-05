@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cbiale/sensorwave/tipos"
 	"github.com/cockroachdb/pebble"
+	"github.com/sensorwave-dev/sensorwave/tipos"
 )
 
 // ConsultarRango consulta mediciones de una o más series dentro de un rango de tiempo

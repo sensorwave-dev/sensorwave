@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cbiale/sensorwave/middleware"
-	"github.com/cbiale/sensorwave/middleware/cliente_coap"
-	clientehttp "github.com/cbiale/sensorwave/middleware/cliente_http"
-	"github.com/cbiale/sensorwave/middleware/cliente_mqtt"
+	"github.com/sensorwave-dev/sensorwave/middleware"
+	"github.com/sensorwave-dev/sensorwave/middleware/cliente_coap"
+	clientehttp "github.com/sensorwave-dev/sensorwave/middleware/cliente_http"
+	"github.com/sensorwave-dev/sensorwave/middleware/cliente_mqtt"
 )
 
 // PayloadActuador define la estructura estándar para mensajes de actuadores.

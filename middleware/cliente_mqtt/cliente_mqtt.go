@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/cbiale/sensorwave/middleware"
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"github.com/google/uuid"
+	"github.com/sensorwave-dev/sensorwave/middleware"
 )
 
 type ClienteMQTT struct {

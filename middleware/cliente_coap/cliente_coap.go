@@ -6,14 +6,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/url"
 
-	"github.com/cbiale/sensorwave/middleware"
 	"github.com/plgd-dev/go-coap/v3/message"
 	"github.com/plgd-dev/go-coap/v3/message/pool"
 	obs "github.com/plgd-dev/go-coap/v3/net/client"
 	"github.com/plgd-dev/go-coap/v3/udp"
 	"github.com/plgd-dev/go-coap/v3/udp/client"
+	"github.com/sensorwave-dev/sensorwave/middleware"
 )
+
+var ruta string = "/sensorwave"
 
 // tipo del cliente
 type ClienteCoAP struct {
@@ -68,7 +71,8 @@ func (c *ClienteCoAP) Publicar(topico string, payload interface{}) {
 
 	// publicar en el recurso
 	ctx := context.Background()
-	_, err = c.cliente.Post(ctx, topico, message.TextPlain, bytes.NewReader(mensajeBytes))
+	path := fmt.Sprintf("%s?topico=%s", ruta, url.QueryEscape(topico))
+	_, err = c.cliente.Post(ctx, path, message.TextPlain, bytes.NewReader(mensajeBytes))
 	if err != nil {
 		log.Fatalf("Error : %v", err)
 	}
@@ -79,6 +83,7 @@ func (c *ClienteCoAP) Publicar(topico string, payload interface{}) {
 func (c *ClienteCoAP) Suscribir(topico string, callback middleware.CallbackFunc) {
 	// subscribe al recurso
 	ctx := context.Background()
+	path := fmt.Sprintf("%s?topico=%s", ruta, url.QueryEscape(topico))
 	internalCallback := func(msg *pool.Message) {
 		var mensaje middleware.Mensaje
 		if p, err := msg.ReadBody(); err == nil && len(p) > 0 {
@@ -95,7 +100,7 @@ func (c *ClienteCoAP) Suscribir(topico string, callback middleware.CallbackFunc)
 		}
 		callback(topico, string(mensaje.Payload))
 	}
-	obs, err := c.cliente.Observe(ctx, topico, internalCallback)
+	obs, err := c.cliente.Observe(ctx, path, internalCallback)
 	if err != nil {
 		log.Fatalf("Error : %v", err)
 	}

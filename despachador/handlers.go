@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/cbiale/sensorwave/tipos"
+	"github.com/sensorwave-dev/sensorwave/tipos"
 )
 
 // FloatNulo es un alias para tipos.FloatNulo para uso en este paquete
@@ -287,11 +287,11 @@ func HandlerConsultarAgregacionTemporal(manager *ManagerDespachador) http.Handle
 
 // ReglaResponse es la respuesta JSON para una regla
 type ReglaResponse struct {
-	ID          string          `json:"id"`
-	Nombre      string          `json:"nombre"`
-	Activa      bool            `json:"activa"`
-	Logica      string          `json:"logica"`
-	NodoID      string          `json:"nodo_id"`
+	ID          string            `json:"id"`
+	Nombre      string            `json:"nombre"`
+	Activa      bool              `json:"activa"`
+	Logica      string            `json:"logica"`
+	NodoID      string            `json:"nodo_id"`
 	Condiciones []tipos.Condicion `json:"condiciones"`
 	Acciones    []tipos.Accion    `json:"acciones"`
 }
@@ -382,7 +382,6 @@ func HandlerListarReglasPorNodo(manager *ManagerDespachador) http.HandlerFunc {
 		EnviarJSON(w, respuesta)
 	}
 }
-
 
 // ============================================================================
 // HELPERS EXPORTADOS - Utilidades HTTP reutilizables

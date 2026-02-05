@@ -3,7 +3,7 @@ package edge
 import (
 	"fmt"
 
-	"github.com/cbiale/sensorwave/tipos"
+	"github.com/sensorwave-dev/sensorwave/tipos"
 )
 
 // ObtenerSeries retorna la metadata de una serie por su path

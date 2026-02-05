@@ -1,4 +1,4 @@
-module github.com/cbiale/sensorwave
+module github.com/sensorwave-dev/sensorwave
 
 go 1.24.0
 
@@ -11,7 +11,6 @@ require (
 	github.com/eclipse/paho.mqtt.golang v1.5.0
 	github.com/google/uuid v1.6.0
 	github.com/klauspost/compress v1.18.2
-	github.com/nats-io/nats.go v1.31.0
 	github.com/pierrec/lz4/v4 v4.1.22
 	github.com/plgd-dev/go-coap/v3 v3.3.6
 	github.com/stretchr/testify v1.11.1
@@ -49,8 +48,6 @@ require (
 	github.com/kr/pretty v0.3.1 // indirect
 	github.com/kr/text v0.2.0 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
-	github.com/nats-io/nkeys v0.4.5 // indirect
-	github.com/nats-io/nuid v1.0.1 // indirect
 	github.com/pion/dtls/v3 v3.0.2 // indirect
 	github.com/pion/logging v0.2.2 // indirect
 	github.com/pion/transport/v3 v3.0.7 // indirect

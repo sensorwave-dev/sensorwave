@@ -1,7 +1,7 @@
 package compresor
 
 import (
-	"github.com/cbiale/sensorwave/tipos"
+	"github.com/sensorwave-dev/sensorwave/tipos"
 )
 
 // CompresorBloque define la interfaz para compresores de bloques (nivel 2)

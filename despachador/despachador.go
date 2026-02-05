@@ -15,8 +15,8 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/cbiale/sensorwave/compresor"
-	"github.com/cbiale/sensorwave/tipos"
+	"github.com/sensorwave-dev/sensorwave/compresor"
+	"github.com/sensorwave-dev/sensorwave/tipos"
 )
 
 type ManagerDespachador struct {
@@ -429,6 +429,7 @@ func (m *ManagerDespachador) ObtenerEstadisticas() EstadisticasDespachador {
 		NumReglas: numReglas,
 	}
 }
+
 // ReglaInfo contiene información de una regla incluyendo el nodo al que pertenece
 type ReglaInfo struct {
 	tipos.Regla

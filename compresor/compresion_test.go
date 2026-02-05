@@ -4,7 +4,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/cbiale/sensorwave/tipos"
+	"github.com/sensorwave-dev/sensorwave/tipos"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

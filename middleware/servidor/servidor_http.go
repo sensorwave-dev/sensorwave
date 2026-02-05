@@ -126,6 +126,12 @@ func manejarSuscripcionHTTP(w http.ResponseWriter, r *http.Request) {
 
 // Manejar publicaciones de mensajes
 func manejarPublicacionHTTP(w http.ResponseWriter, r *http.Request) {
+	topicoQuery := r.URL.Query().Get("topico")
+	if topicoQuery == "" {
+		http.Error(w, "Falta el parámetro 'topico'", http.StatusBadRequest)
+		return
+	}
+
 	// Leer el cuerpo de la solicitud
 	var mensaje Mensaje
 	err := json.NewDecoder(r.Body).Decode(&mensaje)
@@ -136,6 +142,10 @@ func manejarPublicacionHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if mensaje.Topico == "" {
 		http.Error(w, "Falta el parámetro 'topico'", http.StatusBadRequest)
+		return
+	}
+	if mensaje.Topico != topicoQuery {
+		http.Error(w, "El tópico del query y del cuerpo no coinciden", http.StatusBadRequest)
 		return
 	}
 

@@ -14,9 +14,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
-	"github.com/cbiale/sensorwave/compresor"
-	"github.com/cbiale/sensorwave/tipos"
 	"github.com/cockroachdb/pebble"
+	"github.com/sensorwave-dev/sensorwave/compresor"
+	"github.com/sensorwave-dev/sensorwave/tipos"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

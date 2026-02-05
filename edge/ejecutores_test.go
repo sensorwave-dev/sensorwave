@@ -5,7 +5,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/cbiale/sensorwave/middleware"
+	"github.com/sensorwave-dev/sensorwave/middleware"
 )
 
 // --- Tests para ExtraerVariables ---

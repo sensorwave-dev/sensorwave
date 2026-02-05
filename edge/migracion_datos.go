@@ -12,8 +12,8 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/cbiale/sensorwave/tipos"
 	"github.com/cockroachdb/pebble"
+	"github.com/sensorwave-dev/sensorwave/tipos"
 )
 
 // clienteS3 es el cliente S3 para la migración

@@ -2,7 +2,7 @@ package compresor
 
 import (
 	"fmt"
-	"github.com/cbiale/sensorwave/tipos"
+	"github.com/sensorwave-dev/sensorwave/tipos"
 )
 
 // compresionDeltaDeltaTiempo aplica compresión DeltaDelta específicamente para tiempos

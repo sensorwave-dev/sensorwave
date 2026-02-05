@@ -1,8 +1,3 @@
-> [!WARNING]
-> **Este repositorio está archivado. El nuevo repositorio es [SensorWave](https://github.com/sensorwave-dev/sensorwave).**
-
----
-
 # SensorWave
 
 ## Consideraciones

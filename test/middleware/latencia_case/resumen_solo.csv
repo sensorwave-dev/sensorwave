@@ -1,4 +1,0 @@
-Protocolo,Mensajes,Latencia Promedio (ms),Mediana (ms),P95 (ms),P99 (ms),Latencia Mínima (ms),Latencia Máxima (ms),Desviación Estándar (ms)
-COAP,500,0.74,0.74,0.89,1.0,0.48,1.24,0.09
-HTTP,500,0.62,0.62,0.72,0.83,0.37,1.85,0.09
-MQTT,500,0.68,0.67,0.79,0.94,0.34,1.18,0.07

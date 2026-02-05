@@ -10,8 +10,8 @@ import (
 
 	"github.com/cockroachdb/pebble"
 
-	"github.com/cbiale/sensorwave/compresor"
-	"github.com/cbiale/sensorwave/tipos"
+	"github.com/sensorwave-dev/sensorwave/compresor"
+	"github.com/sensorwave-dev/sensorwave/tipos"
 )
 
 type ManagerEdge struct {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -14,6 +15,27 @@ import (
 )
 
 const LOG_COAP = "COAP"
+
+func obtenerTopicoCoAP(r *mux.Message) (string, error) {
+	queries, err := r.Options().Queries()
+	if err != nil {
+		return "", err
+	}
+	for _, q := range queries {
+		partes := strings.SplitN(q, "=", 2)
+		if len(partes) == 0 {
+			continue
+		}
+		if partes[0] != "topico" {
+			continue
+		}
+		if len(partes) == 2 {
+			return partes[1], nil
+		}
+		return "", nil
+	}
+	return "", nil
+}
 
 // datos de las conexiones de los observadores
 type Conexion struct {
@@ -32,8 +54,11 @@ var (
 // Iniciar el servidor CoAP
 func IniciarCoAP(puerto string) {
 	r := mux.NewRouter()
-	// Manejador para cualquier ruta
-	r.DefaultHandle(mux.HandlerFunc(manejadorCoAP))
+	// Manejador para /sensorwave
+	r.Handle("/sensorwave", mux.HandlerFunc(manejadorCoAP))
+	r.DefaultHandle(mux.HandlerFunc(func(w mux.ResponseWriter, r *mux.Message) {
+		_ = w.SetResponse(codes.NotFound, message.TextPlain, bytes.NewReader([]byte("Ruta no encontrada")))
+	}))
 
 	// Iniciar el servidor en el puerto especificado
 	loggerPrint(LOG_COAP, "Iniciando servidor CoAP en :"+puerto)
@@ -45,14 +70,19 @@ func IniciarCoAP(puerto string) {
 
 // handleAll maneja todas las solicitudes CoAP, independientemente de la ruta
 func manejadorCoAP(w mux.ResponseWriter, r *mux.Message) {
-	ruta, err := r.Path()
+	metodo := r.Code()
+	loggerPrint(LOG_COAP, "Solicitud recibida: Método %v", metodo)
+
+	topico, err := obtenerTopicoCoAP(r)
 	if err != nil {
-		loggerPrint(LOG_COAP, "Error al obtener la ruta: %v %v", r.Code(), err)
+		loggerPrint(LOG_COAP, "Error al obtener el query: %v", err)
+		_ = w.SetResponse(codes.BadRequest, message.TextPlain, bytes.NewReader([]byte("Error en query")))
 		return
 	}
-
-	metodo := r.Code()
-	loggerPrint(LOG_COAP, "Solicitud recibida: Método %v, Ruta %v", metodo, ruta)
+	if topico == "" {
+		_ = w.SetResponse(codes.BadRequest, message.TextPlain, bytes.NewReader([]byte("Falta el parámetro 'topico'")))
+		return
+	}
 
 	// obtengo si tiene observe
 	obs, err := r.Options().Observe()
@@ -61,10 +91,10 @@ func manejadorCoAP(w mux.ResponseWriter, r *mux.Message) {
 	switch {
 	// suscribirse
 	case metodo == codes.GET && err == nil && obs == 0:
-		manejarSuscripcionCoAP(w, r, ruta)
+		manejarSuscripcionCoAP(w, r, topico)
 	// desuscribirse
 	case metodo == codes.GET && err == nil && obs != 0:
-		eliminarSuscripcionCoAP(w, r, ruta)
+		eliminarSuscripcionCoAP(w, r, topico)
 	// publicar
 	case metodo == codes.POST:
 		// Obtener la carga útil de la solicitud, si hay alguna
@@ -78,10 +108,19 @@ func manejadorCoAP(w mux.ResponseWriter, r *mux.Message) {
 		err = json.Unmarshal(cuerpo, &mensaje)
 		if err != nil {
 			loggerPrint(LOG_COAP, "Error al convertir el cuerpo de la solicitud: "+err.Error())
+			_ = w.SetResponse(codes.BadRequest, message.TextPlain, bytes.NewReader([]byte("Cuerpo invalido")))
+			return
+		}
+		if mensaje.Topico == "" {
+			_ = w.SetResponse(codes.BadRequest, message.TextPlain, bytes.NewReader([]byte("Falta el parámetro 'topico'")))
+			return
+		}
+		if mensaje.Topico != topico {
+			_ = w.SetResponse(codes.BadRequest, message.TextPlain, bytes.NewReader([]byte("El tópico del query y del cuerpo no coinciden")))
 			return
 		}
 		loggerPrint(LOG_COAP, "Cuerpo convertido a Mensaje: %+v", mensaje)
-		manejarPublicacionCoAP(w, r, ruta, mensaje)
+		manejarPublicacionCoAP(w, r, topico, mensaje)
 	default:
 		loggerPrint(LOG_COAP, "Método no soportado: %v", metodo)
 		err := w.SetResponse(codes.MethodNotAllowed, message.TextPlain, bytes.NewReader([]byte("Método no soportado")))
@@ -110,7 +149,7 @@ func manejarSuscripcionCoAP(w mux.ResponseWriter, r *mux.Message, topico string)
 }
 
 // manejarPublicacionCoAP envía una publicación a los observadores de una ruta
-func manejarPublicacionCoAP(w mux.ResponseWriter, r *mux.Message, ruta string, payload Mensaje) {
+func manejarPublicacionCoAP(w mux.ResponseWriter, r *mux.Message, topico string, payload Mensaje) {
 
 	err := w.SetResponse(codes.Created, message.TextPlain, nil)
 	if err != nil {

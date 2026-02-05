@@ -14,8 +14,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
-	"github.com/cbiale/sensorwave/compresor"
-	"github.com/cbiale/sensorwave/tipos"
+	"github.com/sensorwave-dev/sensorwave/compresor"
+	"github.com/sensorwave-dev/sensorwave/tipos"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -401,7 +401,7 @@ func TestBuscarSeriesPorPath_Exacto(t *testing.T) {
 	m := &ManagerDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
-				NodoID:      "nodo1",
+				NodoID:    "nodo1",
 				Direccion: "192.168.1.1",
 				Series: map[string]tipos.Serie{
 					"/sensores/temperatura": serie,
@@ -575,9 +575,9 @@ func TestConsultarUltimoPuntoEdge_Exitoso(t *testing.T) {
 	}
 
 	nodo := tipos.Nodo{
-		NodoID:      "nodo1",
-		Direccion: "192.168.1.100",
-		PuertoHTTP:  "8080",
+		NodoID:     "nodo1",
+		Direccion:  "192.168.1.100",
+		PuertoHTTP: "8080",
 	}
 
 	resultado, err := m.consultarPuntoEdge(nodo, "/sensores/temp", nil, nil, 5*time.Second)
@@ -601,9 +601,9 @@ func TestConsultarUltimoPuntoEdge_SinDatos(t *testing.T) {
 	}
 
 	nodo := tipos.Nodo{
-		NodoID:      "nodo1",
-		Direccion: "192.168.1.100",
-		PuertoHTTP:  "8080",
+		NodoID:     "nodo1",
+		Direccion:  "192.168.1.100",
+		PuertoHTTP: "8080",
 	}
 
 	resultado, err := m.consultarPuntoEdge(nodo, "/sensores/temp", nil, nil, 5*time.Second)
@@ -624,9 +624,9 @@ func TestConsultarUltimoPuntoEdge_ErrorConexion(t *testing.T) {
 	}
 
 	nodo := tipos.Nodo{
-		NodoID:      "nodo1",
-		Direccion: "192.168.1.100",
-		PuertoHTTP:  "8080",
+		NodoID:     "nodo1",
+		Direccion:  "192.168.1.100",
+		PuertoHTTP: "8080",
 	}
 
 	_, err := m.consultarPuntoEdge(nodo, "/sensores/temp", nil, nil, 5*time.Second)
@@ -648,9 +648,9 @@ func TestConsultarUltimoPuntoEdge_ErrorDelEdge(t *testing.T) {
 	}
 
 	nodo := tipos.Nodo{
-		NodoID:      "nodo1",
-		Direccion: "192.168.1.100",
-		PuertoHTTP:  "8080",
+		NodoID:     "nodo1",
+		Direccion:  "192.168.1.100",
+		PuertoHTTP: "8080",
 	}
 
 	_, err := m.consultarPuntoEdge(nodo, "/sensores/temp", nil, nil, 5*time.Second)
@@ -684,9 +684,9 @@ func TestConsultarEdgeConTimeout_Exitoso(t *testing.T) {
 	}
 
 	nodo := tipos.Nodo{
-		NodoID:      "nodo1",
-		Direccion: "192.168.1.100",
-		PuertoHTTP:  "8080",
+		NodoID:     "nodo1",
+		Direccion:  "192.168.1.100",
+		PuertoHTTP: "8080",
 	}
 
 	resultado, err := m.consultarEdgeConTimeout(nodo, "/sensores/temp", 1000, 3000, 5*time.Second)
@@ -711,9 +711,9 @@ func TestConsultarEdgeConTimeout_SinDatos(t *testing.T) {
 	}
 
 	nodo := tipos.Nodo{
-		NodoID:      "nodo1",
-		Direccion: "192.168.1.100",
-		PuertoHTTP:  "8080",
+		NodoID:     "nodo1",
+		Direccion:  "192.168.1.100",
+		PuertoHTTP: "8080",
 	}
 
 	resultado, err := m.consultarEdgeConTimeout(nodo, "/sensores/temp", 1000, 3000, 5*time.Second)
@@ -734,9 +734,9 @@ func TestConsultarEdgeConTimeout_ErrorConexion(t *testing.T) {
 	}
 
 	nodo := tipos.Nodo{
-		NodoID:      "nodo1",
-		Direccion: "192.168.1.100",
-		PuertoHTTP:  "8080",
+		NodoID:     "nodo1",
+		Direccion:  "192.168.1.100",
+		PuertoHTTP: "8080",
 	}
 
 	// Error de conexion retorna resultado vacío sin error (el edge puede estar offline)
@@ -761,9 +761,9 @@ func TestConsultarEdgeConTimeout_ErrorDelEdge(t *testing.T) {
 	}
 
 	nodo := tipos.Nodo{
-		NodoID:      "nodo1",
-		Direccion: "192.168.1.100",
-		PuertoHTTP:  "8080",
+		NodoID:     "nodo1",
+		Direccion:  "192.168.1.100",
+		PuertoHTTP: "8080",
 	}
 
 	_, err := m.consultarEdgeConTimeout(nodo, "/sensores/temp", 1000, 3000, 5*time.Second)
@@ -1026,9 +1026,9 @@ func TestConsultarRango_SoloEdge(t *testing.T) {
 	m := &ManagerDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
-				NodoID:      "nodo1",
-				Direccion: "192.168.1.100",
-				PuertoHTTP:  "8080",
+				NodoID:     "nodo1",
+				Direccion:  "192.168.1.100",
+				PuertoHTTP: "8080",
 				Series: map[string]tipos.Serie{
 					"/sensores/temp": {SerieId: 1, Path: "/sensores/temp"},
 				},
@@ -1065,9 +1065,9 @@ func TestConsultarRango_EdgeOffline(t *testing.T) {
 	m := &ManagerDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
-				NodoID:      "nodo1",
-				Direccion: "192.168.1.100",
-				PuertoHTTP:  "8080",
+				NodoID:     "nodo1",
+				Direccion:  "192.168.1.100",
+				PuertoHTTP: "8080",
 				Series: map[string]tipos.Serie{
 					"/sensores/temp": {SerieId: 1, Path: "/sensores/temp"},
 				},
@@ -1104,9 +1104,9 @@ func TestConsultarRango_ErrorS3(t *testing.T) {
 	m := &ManagerDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
-				NodoID:      "nodo1",
-				Direccion: "192.168.1.100",
-				PuertoHTTP:  "8080",
+				NodoID:     "nodo1",
+				Direccion:  "192.168.1.100",
+				PuertoHTTP: "8080",
 				Series: map[string]tipos.Serie{
 					"/sensores/temp": {SerieId: 1, Path: "/sensores/temp"},
 				},
@@ -1154,9 +1154,9 @@ func TestConsultarUltimoPunto_DesdeEdge(t *testing.T) {
 	m := &ManagerDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
-				NodoID:      "nodo1",
-				Direccion: "192.168.1.100",
-				PuertoHTTP:  "8080",
+				NodoID:     "nodo1",
+				Direccion:  "192.168.1.100",
+				PuertoHTTP: "8080",
 				Series: map[string]tipos.Serie{
 					"/sensores/temp": {SerieId: 1, Path: "/sensores/temp"},
 				},
@@ -1190,9 +1190,9 @@ func TestConsultarUltimoPunto_EdgeOffline_SinDatosS3(t *testing.T) {
 	m := &ManagerDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
-				NodoID:      "nodo1",
-				Direccion: "192.168.1.100",
-				PuertoHTTP:  "8080",
+				NodoID:     "nodo1",
+				Direccion:  "192.168.1.100",
+				PuertoHTTP: "8080",
 				Series: map[string]tipos.Serie{
 					"/sensores/temp": {SerieId: 1, Path: "/sensores/temp"},
 				},
@@ -1627,9 +1627,9 @@ func TestConsultarUltimoPunto_DesdeS3(t *testing.T) {
 	m := &ManagerDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
-				NodoID:      "nodo1",
-				Direccion: "192.168.1.100",
-				PuertoHTTP:  "8080",
+				NodoID:     "nodo1",
+				Direccion:  "192.168.1.100",
+				PuertoHTTP: "8080",
 				Series: map[string]tipos.Serie{
 					"/sensores/temp": {
 						SerieId:          1,
@@ -1700,9 +1700,9 @@ func TestCargarNodosDesdeS3_SinNodos(t *testing.T) {
 func TestCargarNodosDesdeS3_ConNodos(t *testing.T) {
 	// Crear JSON de nodo de prueba
 	nodo := tipos.Nodo{
-		NodoID:      "nodo-test",
-		Direccion: "192.168.1.100",
-		PuertoHTTP:  "8080",
+		NodoID:     "nodo-test",
+		Direccion:  "192.168.1.100",
+		PuertoHTTP: "8080",
 		Series: map[string]tipos.Serie{
 			"/sensores/temp": {SerieId: 1, Path: "/sensores/temp"},
 		},
@@ -1957,9 +1957,9 @@ func TestCrear_SinClienteS3_ConfigInvalida(t *testing.T) {
 // TestCrear_ConNodosExistentes verifica carga de nodos al crear
 func TestCrear_ConNodosExistentes(t *testing.T) {
 	nodo := tipos.Nodo{
-		NodoID:      "nodo-existente",
-		Direccion: "10.0.0.1",
-		PuertoHTTP:  "9000",
+		NodoID:     "nodo-existente",
+		Direccion:  "10.0.0.1",
+		PuertoHTTP: "9000",
 	}
 	nodoJSON, _ := json.Marshal(nodo)
 
@@ -2070,9 +2070,9 @@ func TestConsultarAgregacion_Promedio(t *testing.T) {
 	m := &ManagerDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
-				NodoID:      "nodo1",
-				Direccion: "192.168.1.100",
-				PuertoHTTP:  "8080",
+				NodoID:     "nodo1",
+				Direccion:  "192.168.1.100",
+				PuertoHTTP: "8080",
 				Series: map[string]tipos.Serie{
 					"/sensores/temp": {SerieId: 1, Path: "/sensores/temp"},
 				},
@@ -2116,9 +2116,9 @@ func TestConsultarAgregacion_Maximo(t *testing.T) {
 	m := &ManagerDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
-				NodoID:      "nodo1",
-				Direccion: "192.168.1.100",
-				PuertoHTTP:  "8080",
+				NodoID:     "nodo1",
+				Direccion:  "192.168.1.100",
+				PuertoHTTP: "8080",
 				Series: map[string]tipos.Serie{
 					"/sensores/temp": {SerieId: 1, Path: "/sensores/temp"},
 				},
@@ -2161,9 +2161,9 @@ func TestConsultarAgregacion_Minimo(t *testing.T) {
 	m := &ManagerDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
-				NodoID:      "nodo1",
-				Direccion: "192.168.1.100",
-				PuertoHTTP:  "8080",
+				NodoID:     "nodo1",
+				Direccion:  "192.168.1.100",
+				PuertoHTTP: "8080",
 				Series: map[string]tipos.Serie{
 					"/sensores/temp": {SerieId: 1, Path: "/sensores/temp"},
 				},
@@ -2206,9 +2206,9 @@ func TestConsultarAgregacion_Suma(t *testing.T) {
 	m := &ManagerDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
-				NodoID:      "nodo1",
-				Direccion: "192.168.1.100",
-				PuertoHTTP:  "8080",
+				NodoID:     "nodo1",
+				Direccion:  "192.168.1.100",
+				PuertoHTTP: "8080",
 				Series: map[string]tipos.Serie{
 					"/sensores/temp": {SerieId: 1, Path: "/sensores/temp"},
 				},
@@ -2251,9 +2251,9 @@ func TestConsultarAgregacion_Count(t *testing.T) {
 	m := &ManagerDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
-				NodoID:      "nodo1",
-				Direccion: "192.168.1.100",
-				PuertoHTTP:  "8080",
+				NodoID:     "nodo1",
+				Direccion:  "192.168.1.100",
+				PuertoHTTP: "8080",
 				Series: map[string]tipos.Serie{
 					"/sensores/temp": {SerieId: 1, Path: "/sensores/temp"},
 				},
@@ -2290,9 +2290,9 @@ func TestConsultarAgregacion_SinDatos(t *testing.T) {
 	m := &ManagerDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
-				NodoID:      "nodo1",
-				Direccion: "192.168.1.100",
-				PuertoHTTP:  "8080",
+				NodoID:     "nodo1",
+				Direccion:  "192.168.1.100",
+				PuertoHTTP: "8080",
 				Series: map[string]tipos.Serie{
 					"/sensores/temp": {SerieId: 1, Path: "/sensores/temp"},
 				},
@@ -2334,9 +2334,9 @@ func TestConsultarAgregacion_ConInt64(t *testing.T) {
 	m := &ManagerDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
-				NodoID:      "nodo1",
-				Direccion: "192.168.1.100",
-				PuertoHTTP:  "8080",
+				NodoID:     "nodo1",
+				Direccion:  "192.168.1.100",
+				PuertoHTTP: "8080",
 				Series: map[string]tipos.Serie{
 					"/sensores/temp": {SerieId: 1, Path: "/sensores/temp"},
 				},
@@ -2423,9 +2423,9 @@ func TestConsultarAgregacionTemporal_MultipleBuckets(t *testing.T) {
 	m := &ManagerDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
-				NodoID:      "nodo1",
-				Direccion: "192.168.1.100",
-				PuertoHTTP:  "8080",
+				NodoID:     "nodo1",
+				Direccion:  "192.168.1.100",
+				PuertoHTTP: "8080",
 				Series: map[string]tipos.Serie{
 					"/sensores/temp": {SerieId: 1, Path: "/sensores/temp"},
 				},
@@ -2473,9 +2473,9 @@ func TestConsultarAgregacionTemporal_SinDatos(t *testing.T) {
 	m := &ManagerDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
-				NodoID:      "nodo1",
-				Direccion: "192.168.1.100",
-				PuertoHTTP:  "8080",
+				NodoID:     "nodo1",
+				Direccion:  "192.168.1.100",
+				PuertoHTTP: "8080",
 				Series: map[string]tipos.Serie{
 					"/sensores/temp": {SerieId: 1, Path: "/sensores/temp"},
 				},
@@ -2518,9 +2518,9 @@ func TestConsultarAgregacionTemporal_OrdenCronologico(t *testing.T) {
 	m := &ManagerDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
-				NodoID:      "nodo1",
-				Direccion: "192.168.1.100",
-				PuertoHTTP:  "8080",
+				NodoID:     "nodo1",
+				Direccion:  "192.168.1.100",
+				PuertoHTTP: "8080",
 				Series: map[string]tipos.Serie{
 					"/sensores/temp": {SerieId: 1, Path: "/sensores/temp"},
 				},
@@ -2647,9 +2647,9 @@ func TestBuscarSeriesPorPath_Wildcard_Encontradas(t *testing.T) {
 	m := &ManagerDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
-				NodoID:      "nodo1",
-				Direccion: "192.168.1.1",
-				PuertoHTTP:  "8080",
+				NodoID:     "nodo1",
+				Direccion:  "192.168.1.1",
+				PuertoHTTP: "8080",
 				Series: map[string]tipos.Serie{
 					"sensor_01/temp":     {SerieId: 1, Path: "sensor_01/temp"},
 					"sensor_01/humidity": {SerieId: 2, Path: "sensor_01/humidity"},
@@ -2701,17 +2701,17 @@ func TestBuscarSeriesPorPath_Wildcard_MultiplesNodos(t *testing.T) {
 	m := &ManagerDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
-				NodoID:      "nodo1",
-				Direccion: "192.168.1.1",
-				PuertoHTTP:  "8080",
+				NodoID:     "nodo1",
+				Direccion:  "192.168.1.1",
+				PuertoHTTP: "8080",
 				Series: map[string]tipos.Serie{
 					"sensor_01/temp": {SerieId: 1, Path: "sensor_01/temp"},
 				},
 			},
 			"nodo2": {
-				NodoID:      "nodo2",
-				Direccion: "192.168.1.2",
-				PuertoHTTP:  "8080",
+				NodoID:     "nodo2",
+				Direccion:  "192.168.1.2",
+				PuertoHTTP: "8080",
 				Series: map[string]tipos.Serie{
 					"sensor_02/temp": {SerieId: 2, Path: "sensor_02/temp"},
 				},
@@ -2759,9 +2759,9 @@ func TestConsultarAgregacion_Wildcard_MultiplesSeries(t *testing.T) {
 	m := &ManagerDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
-				NodoID:      "nodo1",
-				Direccion: "192.168.1.100",
-				PuertoHTTP:  "8080",
+				NodoID:     "nodo1",
+				Direccion:  "192.168.1.100",
+				PuertoHTTP: "8080",
 				Series: map[string]tipos.Serie{
 					"sensor_01/temp": {SerieId: 1, Path: "sensor_01/temp"},
 					"sensor_02/temp": {SerieId: 2, Path: "sensor_02/temp"},
@@ -2836,9 +2836,9 @@ func TestConsultarAgregacion_Wildcard_Suma(t *testing.T) {
 	m := &ManagerDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
-				NodoID:      "nodo1",
-				Direccion: "192.168.1.100",
-				PuertoHTTP:  "8080",
+				NodoID:     "nodo1",
+				Direccion:  "192.168.1.100",
+				PuertoHTTP: "8080",
 				Series: map[string]tipos.Serie{
 					"sensor_01/temp": {SerieId: 1, Path: "sensor_01/temp"},
 					"sensor_02/temp": {SerieId: 2, Path: "sensor_02/temp"},
@@ -2888,9 +2888,9 @@ func TestConsultarAgregacion_Wildcard_Count(t *testing.T) {
 	m := &ManagerDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
-				NodoID:      "nodo1",
-				Direccion: "192.168.1.100",
-				PuertoHTTP:  "8080",
+				NodoID:     "nodo1",
+				Direccion:  "192.168.1.100",
+				PuertoHTTP: "8080",
 				Series: map[string]tipos.Serie{
 					"sensor_01/temp": {SerieId: 1, Path: "sensor_01/temp"},
 					"sensor_02/temp": {SerieId: 2, Path: "sensor_02/temp"},
@@ -2940,9 +2940,9 @@ func TestConsultarAgregacionTemporal_Wildcard(t *testing.T) {
 	m := &ManagerDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
-				NodoID:      "nodo1",
-				Direccion: "192.168.1.100",
-				PuertoHTTP:  "8080",
+				NodoID:     "nodo1",
+				Direccion:  "192.168.1.100",
+				PuertoHTTP: "8080",
 				Series: map[string]tipos.Serie{
 					"sensor_01/temp": {SerieId: 1, Path: "sensor_01/temp"},
 					"sensor_02/temp": {SerieId: 2, Path: "sensor_02/temp"},
@@ -3016,9 +3016,9 @@ func TestConsultarAgregacionTemporal_Wildcard_MultipleBuckets(t *testing.T) {
 	m := &ManagerDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
-				NodoID:      "nodo1",
-				Direccion: "192.168.1.100",
-				PuertoHTTP:  "8080",
+				NodoID:     "nodo1",
+				Direccion:  "192.168.1.100",
+				PuertoHTTP: "8080",
 				Series: map[string]tipos.Serie{
 					"sensor_01/temp": {SerieId: 1, Path: "sensor_01/temp"},
 					"sensor_02/temp": {SerieId: 2, Path: "sensor_02/temp"},
@@ -3080,9 +3080,9 @@ func TestConsultarAgregacion_MultiplesAgregaciones_MinMax(t *testing.T) {
 	m := &ManagerDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
-				NodoID:      "nodo1",
-				Direccion: "192.168.1.100",
-				PuertoHTTP:  "8080",
+				NodoID:     "nodo1",
+				Direccion:  "192.168.1.100",
+				PuertoHTTP: "8080",
 				Series: map[string]tipos.Serie{
 					"/sensores/temp": {SerieId: 1, Path: "/sensores/temp"},
 				},
@@ -3134,9 +3134,9 @@ func TestConsultarAgregacion_MultiplesAgregaciones_TodasLasAgregaciones(t *testi
 	m := &ManagerDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
-				NodoID:      "nodo1",
-				Direccion: "192.168.1.100",
-				PuertoHTTP:  "8080",
+				NodoID:     "nodo1",
+				Direccion:  "192.168.1.100",
+				PuertoHTTP: "8080",
 				Series: map[string]tipos.Serie{
 					"/sensores/temp": {SerieId: 1, Path: "/sensores/temp"},
 				},
@@ -3228,9 +3228,9 @@ func TestConsultarAgregacion_MultiplesAgregaciones_Wildcard(t *testing.T) {
 	m := &ManagerDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
-				NodoID:      "nodo1",
-				Direccion: "192.168.1.100",
-				PuertoHTTP:  "8080",
+				NodoID:     "nodo1",
+				Direccion:  "192.168.1.100",
+				PuertoHTTP: "8080",
 				Series: map[string]tipos.Serie{
 					"sensor_01/temp": {SerieId: 1, Path: "sensor_01/temp"},
 					"sensor_02/temp": {SerieId: 2, Path: "sensor_02/temp"},
