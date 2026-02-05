@@ -71,8 +71,8 @@ func (c *ClienteCoAP) Publicar(topico string, payload interface{}) {
 
 	// publicar en el recurso
 	ctx := context.Background()
-	path := fmt.Sprintf("%s?topico=%s", ruta, url.QueryEscape(topico))
-	_, err = c.cliente.Post(ctx, path, message.TextPlain, bytes.NewReader(mensajeBytes))
+	query := message.Option{ID: message.URIQuery, Value: []byte("topico=" + url.QueryEscape(topico))}
+	_, err = c.cliente.Post(ctx, ruta, message.TextPlain, bytes.NewReader(mensajeBytes), query)
 	if err != nil {
 		log.Fatalf("Error : %v", err)
 	}
@@ -83,7 +83,7 @@ func (c *ClienteCoAP) Publicar(topico string, payload interface{}) {
 func (c *ClienteCoAP) Suscribir(topico string, callback middleware.CallbackFunc) {
 	// subscribe al recurso
 	ctx := context.Background()
-	path := fmt.Sprintf("%s?topico=%s", ruta, url.QueryEscape(topico))
+	query := message.Option{ID: message.URIQuery, Value: []byte("topico=" + url.QueryEscape(topico))}
 	internalCallback := func(msg *pool.Message) {
 		var mensaje middleware.Mensaje
 		if p, err := msg.ReadBody(); err == nil && len(p) > 0 {
@@ -100,7 +100,7 @@ func (c *ClienteCoAP) Suscribir(topico string, callback middleware.CallbackFunc)
 		}
 		callback(topico, string(mensaje.Payload))
 	}
-	obs, err := c.cliente.Observe(ctx, path, internalCallback)
+	obs, err := c.cliente.Observe(ctx, ruta, internalCallback, query)
 	if err != nil {
 		log.Fatalf("Error : %v", err)
 	}

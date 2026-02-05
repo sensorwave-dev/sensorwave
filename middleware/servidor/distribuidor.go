@@ -6,10 +6,16 @@ func enviarCoAP(LOG string, payload Mensaje) {
 	// publica el mensaje en el tópico
 	loggerPrint(LOG, ">> Publicando mensaje en el tópico CoAP "+payload.Topico)
 
+	publicacion, err := normalizarYValidarTopico(payload.Topico, false)
+	if err != nil {
+		loggerPrint(LOG, "Topico invalido para distribuir en CoAP: %v", payload.Topico)
+		return
+	}
+
 	// notifico a todos los observadores
 	mutexCoAP.Lock()
 	for patron, conexiones := range observadores {
-		if !coincidePatron(payload.Topico, patron) {
+		if !coincidePatron(publicacion, patron) {
 			continue
 		}
 		for _, o := range conexiones {
@@ -24,13 +30,21 @@ func enviarHTTP(LOG string, payload Mensaje) {
 	// publica el mensaje en el tópico
 	loggerPrint(LOG, ">> Publicando mensaje en el tópico HTTP "+payload.Topico)
 
+	publicacion, err := normalizarYValidarTopico(payload.Topico, false)
+	if err != nil {
+		loggerPrint(LOG, "Topico invalido para distribuir en HTTP: %v", payload.Topico)
+		return
+	}
+
 	// no se serializa el mensaje a JSON
 	// Publicar un mensaje en el tópico
 	// Enviar el mensaje a todos los clientes suscritos al tópico
 	mutexHTTP.Lock()
+	loggerPrint(LOG, "Patrones HTTP registrados: %d", len(clientesPorTopico))
 	clienteEnviado := false
 	for patron, clientes := range clientesPorTopico {
-		if !coincidePatron(payload.Topico, patron) {
+		loggerPrint(LOG, "Patron HTTP: %s, clientes: %d, payload: %s", patron, len(clientes), publicacion)
+		if !coincidePatron(publicacion, patron) {
 			continue
 		}
 		for _, cliente := range clientes {

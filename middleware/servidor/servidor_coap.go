@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -21,6 +22,7 @@ func obtenerTopicoCoAP(r *mux.Message) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	loggerPrint(LOG_COAP, "CoAP queries recibidas: %v", queries)
 	for _, q := range queries {
 		partes := strings.SplitN(q, "=", 2)
 		if len(partes) == 0 {
@@ -30,7 +32,11 @@ func obtenerTopicoCoAP(r *mux.Message) (string, error) {
 			continue
 		}
 		if len(partes) == 2 {
-			return partes[1], nil
+			valor, err := url.QueryUnescape(partes[1])
+			if err != nil {
+				return "", err
+			}
+			return valor, nil
 		}
 		return "", nil
 	}
@@ -84,17 +90,26 @@ func manejadorCoAP(w mux.ResponseWriter, r *mux.Message) {
 		return
 	}
 
+	permitirWildcards := metodo == codes.GET
+	normalizado, err := normalizarYValidarTopico(topico, permitirWildcards)
+	if err != nil {
+		_ = w.SetResponse(codes.BadRequest, message.TextPlain, bytes.NewReader([]byte("Topico invalido")))
+		return
+	}
+
 	// obtengo si tiene observe
 	obs, err := r.Options().Observe()
+
+	loggerPrint(LOG_COAP, "Topico: %v, Observe: %v Metodo: %v", normalizado, obs, metodo)
 
 	// Responder según el método
 	switch {
 	// suscribirse
 	case metodo == codes.GET && err == nil && obs == 0:
-		manejarSuscripcionCoAP(w, r, topico)
+		manejarSuscripcionCoAP(w, r, normalizado)
 	// desuscribirse
 	case metodo == codes.GET && err == nil && obs != 0:
-		eliminarSuscripcionCoAP(w, r, topico)
+		eliminarSuscripcionCoAP(w, r, normalizado)
 	// publicar
 	case metodo == codes.POST:
 		// Obtener la carga útil de la solicitud, si hay alguna
@@ -115,12 +130,18 @@ func manejadorCoAP(w mux.ResponseWriter, r *mux.Message) {
 			_ = w.SetResponse(codes.BadRequest, message.TextPlain, bytes.NewReader([]byte("Falta el parámetro 'topico'")))
 			return
 		}
-		if mensaje.Topico != topico {
+		mensajeTopico, err := normalizarYValidarTopico(mensaje.Topico, false)
+		if err != nil {
+			_ = w.SetResponse(codes.BadRequest, message.TextPlain, bytes.NewReader([]byte("Topico invalido")))
+			return
+		}
+		if mensajeTopico != normalizado {
 			_ = w.SetResponse(codes.BadRequest, message.TextPlain, bytes.NewReader([]byte("El tópico del query y del cuerpo no coinciden")))
 			return
 		}
+		mensaje.Topico = mensajeTopico
 		loggerPrint(LOG_COAP, "Cuerpo convertido a Mensaje: %+v", mensaje)
-		manejarPublicacionCoAP(w, r, topico, mensaje)
+		manejarPublicacionCoAP(w, r, normalizado, mensaje)
 	default:
 		loggerPrint(LOG_COAP, "Método no soportado: %v", metodo)
 		err := w.SetResponse(codes.MethodNotAllowed, message.TextPlain, bytes.NewReader([]byte("Método no soportado")))

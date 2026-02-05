@@ -71,6 +71,12 @@ func manejarSuscripcionHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	normalizado, err := normalizarYValidarTopico(topico, true)
+	if err != nil {
+		http.Error(w, "Topico invalido", http.StatusBadRequest)
+		return
+	}
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -83,10 +89,10 @@ func manejarSuscripcionHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	mutexHTTP.Lock()
-	if clientesPorTopico[topico] == nil {
-		clientesPorTopico[topico] = make(map[string]*Cliente)
+	if clientesPorTopico[normalizado] == nil {
+		clientesPorTopico[normalizado] = make(map[string]*Cliente)
 	}
-	clientesPorTopico[topico][clienteID] = cliente
+	clientesPorTopico[normalizado][clienteID] = cliente
 	mutexHTTP.Unlock()
 
 	flusher, ok := w.(http.Flusher)
@@ -98,7 +104,7 @@ func manejarSuscripcionHTTP(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "data: {\"clienteID\":\"%s\"}\n\n", clienteID)
 	flusher.Flush()
 
-	loggerPrint(LOG_HTTP, "Cliente "+clienteID+" conectado al tópico "+topico)
+	loggerPrint(LOG_HTTP, "Cliente "+clienteID+" conectado al tópico "+normalizado)
 
 	for msg := range cliente.Channel {
 		fmt.Fprintf(w, "data: %s\n\n", msg)
@@ -106,10 +112,10 @@ func manejarSuscripcionHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	mutexHTTP.Lock()
-	if clientes, exists := clientesPorTopico[topico]; exists {
+	if clientes, exists := clientesPorTopico[normalizado]; exists {
 		delete(clientes, clienteID)
 		if len(clientes) == 0 {
-			delete(clientesPorTopico, topico)
+			delete(clientesPorTopico, normalizado)
 		}
 	}
 	mutexHTTP.Unlock()
@@ -121,7 +127,7 @@ func manejarSuscripcionHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	cliente.mu.Unlock()
 
-	loggerPrint(LOG_HTTP, "Cliente "+clienteID+" desconectado del tópico "+topico)
+	loggerPrint(LOG_HTTP, "Cliente "+clienteID+" desconectado del tópico "+normalizado)
 }
 
 // Manejar publicaciones de mensajes
@@ -132,9 +138,15 @@ func manejarPublicacionHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	topicoQuery, err := normalizarYValidarTopico(topicoQuery, false)
+	if err != nil {
+		http.Error(w, "Topico invalido", http.StatusBadRequest)
+		return
+	}
+
 	// Leer el cuerpo de la solicitud
 	var mensaje Mensaje
-	err := json.NewDecoder(r.Body).Decode(&mensaje)
+	err = json.NewDecoder(r.Body).Decode(&mensaje)
 	if err != nil {
 		http.Error(w, "Error al procesar el cuerpo de la solicitud: "+err.Error(), http.StatusBadRequest)
 		return
@@ -144,10 +156,17 @@ func manejarPublicacionHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Falta el parámetro 'topico'", http.StatusBadRequest)
 		return
 	}
-	if mensaje.Topico != topicoQuery {
+
+	mensajeTopico, err := normalizarYValidarTopico(mensaje.Topico, false)
+	if err != nil {
+		http.Error(w, "Topico invalido", http.StatusBadRequest)
+		return
+	}
+	if mensajeTopico != topicoQuery {
 		http.Error(w, "El tópico del query y del cuerpo no coinciden", http.StatusBadRequest)
 		return
 	}
+	mensaje.Topico = mensajeTopico
 
 	loggerPrint(LOG_HTTP, "Mensaje recibido en el tópico "+mensaje.Topico)
 
@@ -171,14 +190,20 @@ func manejarDesuscripcionHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	normalizado, err := normalizarYValidarTopico(topico, true)
+	if err != nil {
+		http.Error(w, "Topico invalido", http.StatusBadRequest)
+		return
+	}
+
 	mutexHTTP.Lock()
 	var clienteEncontrado *Cliente
-	if clientes, exists := clientesPorTopico[topico]; exists {
+	if clientes, exists := clientesPorTopico[normalizado]; exists {
 		if cliente, existe := clientes[clienteID]; existe {
 			clienteEncontrado = cliente
 			delete(clientes, clienteID)
 			if len(clientes) == 0 {
-				delete(clientesPorTopico, topico)
+				delete(clientesPorTopico, normalizado)
 			}
 		}
 	}
@@ -191,7 +216,7 @@ func manejarDesuscripcionHTTP(w http.ResponseWriter, r *http.Request) {
 			clienteEncontrado.cerrado = true
 		}
 		clienteEncontrado.mu.Unlock()
-		loggerPrint(LOG_HTTP, "Cliente "+clienteID+" desuscrito del tópico "+topico)
+		loggerPrint(LOG_HTTP, "Cliente "+clienteID+" desuscrito del tópico "+normalizado)
 		w.WriteHeader(http.StatusOK)
 	} else {
 		http.Error(w, "Cliente no encontrado", http.StatusNotFound)

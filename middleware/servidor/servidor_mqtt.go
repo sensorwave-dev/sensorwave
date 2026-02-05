@@ -39,14 +39,34 @@ func manejadorMQTT(cliente MQTT.Client, mensajeMQTT MQTT.Message) {
 	if strings.HasPrefix(mensajeMQTT.Topic(), "$SYS/") {
 		return // Ignora mensajes del sistema
 	}
-	loggerPrint(LOG_MQTT, "Mensaje recibido en el tópico "+mensajeMQTT.Topic())
+
+	topicoMQTT, err := normalizarYValidarTopico(mensajeMQTT.Topic(), false)
+	if err != nil {
+		loggerPrint(LOG_MQTT, "Tópico MQTT inválido: %v", mensajeMQTT.Topic())
+		return
+	}
+	loggerPrint(LOG_MQTT, "Mensaje recibido en el tópico "+topicoMQTT)
 
 	var mensaje Mensaje
-	err := json.Unmarshal(mensajeMQTT.Payload(), &mensaje)
+	err = json.Unmarshal(mensajeMQTT.Payload(), &mensaje)
 	if err != nil {
 		loggerPrint(LOG_MQTT, "Error al procesar el cuerpo de la solicitud: "+err.Error())
 		return
 	}
+	if mensaje.Topico == "" {
+		loggerPrint(LOG_MQTT, "Mensaje sin topico en body")
+		return
+	}
+	mensajeTopico, err := normalizarYValidarTopico(mensaje.Topico, false)
+	if err != nil {
+		loggerPrint(LOG_MQTT, "Tópico en body inválido: %v", mensaje.Topico)
+		return
+	}
+	if mensajeTopico != topicoMQTT {
+		loggerPrint(LOG_MQTT, "Tópico MQTT y body no coinciden")
+		return
+	}
+	mensaje.Topico = mensajeTopico
 
 	// enviar publicaciones a los otros protocolos (si el mensaje es original)
 	if mensaje.Original {

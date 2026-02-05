@@ -1,3 +1,4 @@
 /docs/
 **/*.db/
 RESUMEN_SELECT.md
+/test/
