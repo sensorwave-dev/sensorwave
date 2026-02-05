@@ -11,8 +11,10 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/sensorwave-dev/sensorwave/middleware"
+	"github.com/sensorwave-dev/sensorwave/middleware/internal/mensaje"
 )
 
 type ClienteHTTP struct {
@@ -24,6 +26,12 @@ type ClienteHTTP struct {
 
 var ruta string = "/sensorwave"
 
+const (
+	ackTimeout      = 2 * time.Second
+	ackRandomFactor = 1.5
+	maxRetransmit   = 4
+)
+
 // NuevoClienteHTTP crea un nuevo cliente HTTP
 func Conectar(host string, puerto string) *ClienteHTTP {
 	return &ClienteHTTP{
@@ -33,26 +41,11 @@ func Conectar(host string, puerto string) *ClienteHTTP {
 }
 
 // Publicar realiza un POST al servidor HTTP
-func (c *ClienteHTTP) Publicar(topico string, payload interface{}) {
-	// Convertir el payload a []byte
-	var data []byte
-	switch v := payload.(type) {
-	case string:
-		data = []byte(v)
-	case []byte:
-		data = v
-	case int, int32, int64, float32, float64:
-		data = []byte(fmt.Sprintf("%v", v))
-	default:
-		// Serializar a JSON para otros tipos
-		var err error
-		data, err = json.Marshal(v)
-		if err != nil {
-			log.Fatalf("Error al serializar el payload: %v", err)
-		}
+func (c *ClienteHTTP) Publicar(topico string, payload interface{}, opciones ...middleware.PublicarOpcion) {
+	mensaje, err := mensaje.Construir(topico, payload, opciones...)
+	if err != nil {
+		log.Fatalf("Error al construir mensaje: %v", err)
 	}
-
-	mensaje := middleware.Mensaje{Original: true, Topico: topico, Payload: data, Interno: false}
 
 	// Serializar el mensaje a JSON
 	mensajeBytes, err := json.Marshal(mensaje)
@@ -60,8 +53,33 @@ func (c *ClienteHTTP) Publicar(topico string, payload interface{}) {
 		log.Fatalf("Error al serializar el mensaje: %v", err)
 	}
 
-	// Realizar la solicitud POST
 	url := fmt.Sprintf("%s%s?topico=%s", c.BaseURL, ruta, url.QueryEscape(topico))
+	if mensaje.QoS == 1 {
+		reintentos := 0
+		delay := ackTimeout
+		for {
+			resp, err := c.Cliente.Post(url, "application/json", bytes.NewReader(mensajeBytes))
+			if err == nil {
+				body, _ := io.ReadAll(resp.Body)
+				resp.Body.Close()
+				if resp.StatusCode == http.StatusOK {
+					var ack struct {
+						MessageID string `json:"messageId"`
+					}
+					if json.Unmarshal(body, &ack) == nil && ack.MessageID == mensaje.MessageID {
+						return
+					}
+				}
+			}
+			if reintentos >= maxRetransmit {
+				log.Fatalf("No se recibió ACK para messageId %s", mensaje.MessageID)
+			}
+			time.Sleep(delay)
+			delay = time.Duration(float64(delay) * ackRandomFactor)
+			reintentos++
+		}
+	}
+
 	resp, err := c.Cliente.Post(url, "application/json", bytes.NewReader(mensajeBytes))
 	if err != nil {
 		log.Fatalf("Error al realizar el POST: %v", err)
@@ -114,10 +132,52 @@ func (c *ClienteHTTP) Suscribir(topico string, callback middleware.CallbackFunc)
 					}
 				}
 
-				callback(topico, datos)
+				var payloadStr string
+				if strings.HasPrefix(datos, "{") {
+					var msg struct {
+						MessageID string `json:"messageId"`
+						QoS       int    `json:"qos"`
+						Payload   string `json:"payload"`
+					}
+					if err := json.Unmarshal([]byte(datos), &msg); err == nil {
+						payloadStr = msg.Payload
+						if msg.QoS == 1 && msg.MessageID != "" {
+							c.enviarAck(msg.MessageID)
+						}
+					}
+				}
+				if payloadStr == "" {
+					payloadStr = datos
+				}
+				callback(topico, payloadStr)
 			}
 		}
 	}()
+}
+
+func (c *ClienteHTTP) enviarAck(messageID string) {
+	c.mu.Lock()
+	clienteID := c.clienteID
+	c.mu.Unlock()
+
+	if clienteID == "" {
+		return
+	}
+
+	body, err := json.Marshal(map[string]string{
+		"clienteId": clienteID,
+		"messageId": messageID,
+	})
+	if err != nil {
+		return
+	}
+
+	url := fmt.Sprintf("%s%s/ack", c.BaseURL, ruta)
+	resp, err := c.Cliente.Post(url, "application/json", bytes.NewReader(body))
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
 }
 
 func (c *ClienteHTTP) Desuscribir(topico string) {

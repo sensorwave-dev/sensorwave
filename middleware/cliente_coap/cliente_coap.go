@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/url"
 
@@ -14,6 +13,7 @@ import (
 	"github.com/plgd-dev/go-coap/v3/udp"
 	"github.com/plgd-dev/go-coap/v3/udp/client"
 	"github.com/sensorwave-dev/sensorwave/middleware"
+	"github.com/sensorwave-dev/sensorwave/middleware/internal/mensaje"
 )
 
 var ruta string = "/sensorwave"
@@ -43,25 +43,11 @@ func (c *ClienteCoAP) Desconectar() {
 }
 
 // publicar
-func (c *ClienteCoAP) Publicar(topico string, payload interface{}) {
-	var data []byte
-	switch v := payload.(type) {
-	case string:
-		data = []byte(v) // Si es un string, convertir directamente a []byte
-	case []byte:
-		data = v // Si ya es []byte, usarlo directamente
-	case int, int32, int64, float32, float64:
-		data = []byte(fmt.Sprintf("%v", v)) // Convertir números a string y luego a []byte
-	default:
-		// Para otros tipos, usar JSON como formato de serialización
-		var err error
-		data, err = json.Marshal(v)
-		if err != nil {
-			log.Fatalf("Error al serializar el payload: %v", err)
-		}
+func (c *ClienteCoAP) Publicar(topico string, payload interface{}, opciones ...middleware.PublicarOpcion) {
+	mensaje, err := mensaje.Construir(topico, payload, opciones...)
+	if err != nil {
+		log.Fatalf("Error al construir mensaje: %v", err)
 	}
-
-	mensaje := middleware.Mensaje{Original: true, Topico: topico, Payload: data, Interno: false}
 
 	// Serializar el mensaje a JSON
 	mensajeBytes, err := json.Marshal(mensaje)
@@ -72,7 +58,16 @@ func (c *ClienteCoAP) Publicar(topico string, payload interface{}) {
 	// publicar en el recurso
 	ctx := context.Background()
 	query := message.Option{ID: message.URIQuery, Value: []byte("topico=" + url.QueryEscape(topico))}
-	_, err = c.cliente.Post(ctx, ruta, message.TextPlain, bytes.NewReader(mensajeBytes), query)
+	req, err := c.cliente.NewPostRequest(ctx, ruta, message.TextPlain, bytes.NewReader(mensajeBytes), query)
+	if err != nil {
+		log.Fatalf("Error al crear la solicitud: %v", err)
+	}
+	if mensaje.QoS == 1 {
+		req.SetType(message.Confirmable)
+	} else {
+		req.SetType(message.NonConfirmable)
+	}
+	_, err = c.cliente.Do(req)
 	if err != nil {
 		log.Fatalf("Error : %v", err)
 	}
@@ -89,7 +84,7 @@ func (c *ClienteCoAP) Suscribir(topico string, callback middleware.CallbackFunc)
 		if p, err := msg.ReadBody(); err == nil && len(p) > 0 {
 			err := json.Unmarshal(p, &mensaje)
 			if err != nil {
-				log.Fatalf("Error al procesar el cuerpo de la solicitud: " + err.Error())
+				log.Fatalf("Error al procesar el cuerpo de la solicitud: %v", err)
 				return
 			}
 		}

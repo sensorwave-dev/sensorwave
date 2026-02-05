@@ -135,6 +135,10 @@ func manejadorCoAP(w mux.ResponseWriter, r *mux.Message) {
 			_ = w.SetResponse(codes.BadRequest, message.TextPlain, bytes.NewReader([]byte("Topico invalido")))
 			return
 		}
+		if err := validarQoS(mensaje); err != nil {
+			_ = w.SetResponse(codes.BadRequest, message.TextPlain, bytes.NewReader([]byte("QoS invalido")))
+			return
+		}
 		if mensajeTopico != normalizado {
 			_ = w.SetResponse(codes.BadRequest, message.TextPlain, bytes.NewReader([]byte("El tópico del query y del cuerpo no coinciden")))
 			return
@@ -206,10 +210,22 @@ func eliminarSuscripcionCoAP(w mux.ResponseWriter, r *mux.Message, ruta string) 
 	mutexCoAP.Unlock()
 }
 
+func tipoCoAPPorQoS(qos int) message.Type {
+	if qos == 1 {
+		return message.Confirmable
+	}
+	return message.NonConfirmable
+}
+
 func enviarRespuesta(cc mux.Conn, token []byte, mensaje Mensaje, obs int64) error {
+	return enviarRespuestaConTipo(cc, token, mensaje, obs, message.NonConfirmable)
+}
+
+func enviarRespuestaConTipo(cc mux.Conn, token []byte, mensaje Mensaje, obs int64, tipo message.Type) error {
 	m := cc.AcquireMessage(cc.Context())
 	defer cc.ReleaseMessage(m)
 	m.SetCode(codes.Content)
+	m.SetType(tipo)
 	m.SetToken(token)
 	mensajeBytes, err := json.Marshal(mensaje)
 	if err != nil {

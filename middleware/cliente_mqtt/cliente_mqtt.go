@@ -8,6 +8,7 @@ import (
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"github.com/google/uuid"
 	"github.com/sensorwave-dev/sensorwave/middleware"
+	"github.com/sensorwave-dev/sensorwave/middleware/internal/mensaje"
 )
 
 type ClienteMQTT struct {
@@ -39,25 +40,11 @@ func (c *ClienteMQTT) Desconectar() {
 }
 
 // publicar
-func (c *ClienteMQTT) Publicar(topico string, payload interface{}) {
-	var data []byte
-	switch v := payload.(type) {
-	case string:
-		data = []byte(v) // Si es un string, convertir directamente a []byte
-	case []byte:
-		data = v // Si ya es []byte, usarlo directamente
-	case int, int32, int64, float32, float64:
-		data = []byte(fmt.Sprintf("%v", v)) // Convertir números a string y luego a []byte
-	default:
-		// Para otros tipos, usar JSON como formato de serialización
-		var err error
-		data, err = json.Marshal(v)
-		if err != nil {
-			log.Fatalf("Error al serializar el payload: %v", err)
-		}
+func (c *ClienteMQTT) Publicar(topico string, payload interface{}, opciones ...middleware.PublicarOpcion) {
+	mensaje, err := mensaje.Construir(topico, payload, opciones...)
+	if err != nil {
+		log.Fatalf("Error al construir mensaje: %v", err)
 	}
-
-	mensaje := middleware.Mensaje{Original: true, Topico: topico, Payload: data, Interno: false}
 
 	// Serializar el mensaje a JSON
 	mensajeBytes, err := json.Marshal(mensaje)
@@ -66,7 +53,7 @@ func (c *ClienteMQTT) Publicar(topico string, payload interface{}) {
 	}
 
 	// Publicar un mensaje en el tópico
-	if token := c.cliente.Publish(topico, 0, false, mensajeBytes); token.Wait() && token.Error() != nil {
+	if token := c.cliente.Publish(topico, byte(mensaje.QoS), false, mensajeBytes); token.Wait() && token.Error() != nil {
 		log.Fatalf("Error: %v", token.Error())
 	}
 }
@@ -79,7 +66,7 @@ func (c *ClienteMQTT) Suscribir(topico string, callback middleware.CallbackFunc)
 		var mensaje middleware.Mensaje
 		err := json.Unmarshal(msg.Payload(), &mensaje)
 		if err != nil {
-			log.Fatalf("Error al procesar el cuerpo de la solicitud: " + err.Error())
+			log.Fatalf("Error al procesar el cuerpo de la solicitud: %v", err)
 			return
 		}
 		callback(msg.Topic(), string(mensaje.Payload))

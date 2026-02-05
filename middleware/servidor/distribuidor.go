@@ -6,6 +6,11 @@ func enviarCoAP(LOG string, payload Mensaje) {
 	// publica el mensaje en el tópico
 	loggerPrint(LOG, ">> Publicando mensaje en el tópico CoAP "+payload.Topico)
 
+	if err := validarQoS(payload); err != nil {
+		loggerPrint(LOG, "QoS invalido para distribuir en CoAP: %v", err)
+		return
+	}
+
 	publicacion, err := normalizarYValidarTopico(payload.Topico, false)
 	if err != nil {
 		loggerPrint(LOG, "Topico invalido para distribuir en CoAP: %v", payload.Topico)
@@ -20,7 +25,7 @@ func enviarCoAP(LOG string, payload Mensaje) {
 		}
 		for _, o := range conexiones {
 			loggerPrint(LOG, "Enviando mensaje a observador CoAP: %v", o)
-			enviarRespuesta(o.conexion, o.token, payload, valor.Add(1))
+			enviarRespuestaConTipo(o.conexion, o.token, payload, valor.Add(1), tipoCoAPPorQoS(payload.QoS))
 		}
 	}
 	mutexCoAP.Unlock()
@@ -30,9 +35,20 @@ func enviarHTTP(LOG string, payload Mensaje) {
 	// publica el mensaje en el tópico
 	loggerPrint(LOG, ">> Publicando mensaje en el tópico HTTP "+payload.Topico)
 
+	if err := validarQoS(payload); err != nil {
+		loggerPrint(LOG, "QoS invalido para distribuir en HTTP: %v", err)
+		return
+	}
+
 	publicacion, err := normalizarYValidarTopico(payload.Topico, false)
 	if err != nil {
 		loggerPrint(LOG, "Topico invalido para distribuir en HTTP: %v", payload.Topico)
+		return
+	}
+
+	mensajeHTTP, err := serializarMensajeHTTP(payload)
+	if err != nil {
+		loggerPrint(LOG, "Error al serializar mensaje HTTP: %v", err)
 		return
 	}
 
@@ -49,9 +65,13 @@ func enviarHTTP(LOG string, payload Mensaje) {
 		}
 		for _, cliente := range clientes {
 			clienteEnviado = true
+			if payload.QoS == 1 {
+				enviarHTTPQoS1(LOG, cliente, mensajeHTTP, payload.MessageID)
+				continue
+			}
 			go func(c *Cliente) {
 				select {
-				case c.Channel <- string(payload.Payload):
+				case c.Channel <- mensajeHTTP:
 					loggerPrint(LOG, "Mensaje enviado al tópico HTTP"+payload.Topico)
 				default:
 					loggerPrint(LOG, "No se pudo enviar el mensaje al cliente en el tópico HTTP"+payload.Topico+" (canal bloqueado)")

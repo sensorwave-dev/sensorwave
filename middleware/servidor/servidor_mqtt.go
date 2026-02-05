@@ -62,6 +62,10 @@ func manejadorMQTT(cliente MQTT.Client, mensajeMQTT MQTT.Message) {
 		loggerPrint(LOG_MQTT, "Tópico en body inválido: %v", mensaje.Topico)
 		return
 	}
+	if err := validarQoS(mensaje); err != nil {
+		loggerPrint(LOG_MQTT, "QoS inválido: %v", err)
+		return
+	}
 	if mensajeTopico != topicoMQTT {
 		loggerPrint(LOG_MQTT, "Tópico MQTT y body no coinciden")
 		return
