@@ -1,4 +1,4 @@
-package edge
+package borde
 
 import (
 	"encoding/json"
@@ -193,7 +193,7 @@ func TestValidarVariablesRequeridas_ReglaId(t *testing.T) {
 
 // --- Tests para ResolverPlantilla ---
 
-func TestResolverPlantilla_SoloParams(t *testing.T) {
+func TestResolverPlantilla_SoloParametros(t *testing.T) {
 	plantilla := "actuadores/{nodo_id}/{tipo}"
 	params := map[string]string{
 		"nodo_id": "nodo_01",
@@ -313,7 +313,7 @@ func (m *mockCliente) Desconectar() {
 	m.conectado = false
 }
 
-func (m *mockCliente) Publicar(topico string, mensaje interface{}) {
+func (m *mockCliente) Publicar(topico string, mensaje interface{}, opciones ...middleware.PublicarOpcion) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -353,7 +353,7 @@ func TestCrearEjecutorPublicar_Simple(t *testing.T) {
 	accion := Accion{
 		Tipo:    "publicar_mqtt",
 		Destino: "actuadores/nodo_01/ventilador",
-		Params: map[string]string{
+		Parametros: map[string]string{
 			"comando": "encender",
 		},
 	}
@@ -397,7 +397,7 @@ func TestCrearEjecutorPublicar_ConPlantilla(t *testing.T) {
 	accion := Accion{
 		Tipo:    "publicar_mqtt",
 		Destino: "actuadores/{nodo_id}/{tipo}",
-		Params: map[string]string{
+		Parametros: map[string]string{
 			"nodo_id": "nodo_03",
 			"tipo":    "ventilador",
 			"comando": "encender",
@@ -424,7 +424,7 @@ func TestCrearEjecutorPublicar_ConContextoSerie(t *testing.T) {
 	accion := Accion{
 		Tipo:    "publicar_mqtt",
 		Destino: "actuadores/{serie_0}/ventilador",
-		Params: map[string]string{
+		Parametros: map[string]string{
 			"comando": "encender",
 		},
 	}
@@ -464,9 +464,9 @@ func TestCrearEjecutorPublicar_TopicoVacio(t *testing.T) {
 	ejecutor := CrearEjecutorPublicar(cliente)
 
 	accion := Accion{
-		Tipo:    "publicar_mqtt",
-		Destino: "{inexistente}", // Se resuelve a vacío
-		Params:  map[string]string{},
+		Tipo:       "publicar_mqtt",
+		Destino:    "{inexistente}", // Se resuelve a vacío
+		Parametros: map[string]string{},
 	}
 	regla := &Regla{ID: "test"}
 
@@ -483,7 +483,7 @@ func TestCrearEjecutorPublicar_ContextoFiltrado(t *testing.T) {
 	accion := Accion{
 		Tipo:    "publicar_mqtt",
 		Destino: "test/topico",
-		Params: map[string]string{
+		Parametros: map[string]string{
 			"comando": "test",
 		},
 	}
@@ -522,7 +522,7 @@ func TestCrearEjecutorPublicar_ParametrosFiltrados(t *testing.T) {
 	accion := Accion{
 		Tipo:    "publicar_mqtt",
 		Destino: "test/topico",
-		Params: map[string]string{
+		Parametros: map[string]string{
 			"comando":   "encender", // No debería estar en Parametros (es campo principal)
 			"velocidad": "alta",     // Debería estar en Parametros
 			"duracion":  "300",      // Debería estar en Parametros

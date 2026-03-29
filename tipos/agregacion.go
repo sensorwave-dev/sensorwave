@@ -8,7 +8,7 @@ const (
 	AgregacionMaximo   TipoAgregacion = "maximo"
 	AgregacionMinimo   TipoAgregacion = "minimo"
 	AgregacionSuma     TipoAgregacion = "suma"
-	AgregacionCount    TipoAgregacion = "count"
+	AgregacionConteo   TipoAgregacion = "count"
 )
 
 // ResultadoAgregacionTemporal representa el resultado de agregaciones temporales en formato matricial.

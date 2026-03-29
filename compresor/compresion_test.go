@@ -17,8 +17,8 @@ import (
 func TestCompresorNinguno_Int64(t *testing.T) {
 	c := &CompresorNingunoGenerico[int64]{}
 
-	testCases := []struct {
-		name    string
+	casosDePrueba := []struct {
+		nombre  string
 		valores []int64
 	}{
 		{"vacio", []int64{}},
@@ -28,8 +28,8 @@ func TestCompresorNinguno_Int64(t *testing.T) {
 		{"valores_extremos", []int64{math.MinInt64, 0, math.MaxInt64}},
 	}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, tc := range casosDePrueba {
+		t.Run(tc.nombre, func(t *testing.T) {
 			comprimido, err := c.Comprimir(tc.valores)
 			require.NoError(t, err)
 
@@ -44,8 +44,8 @@ func TestCompresorNinguno_Int64(t *testing.T) {
 func TestCompresorNinguno_Float64(t *testing.T) {
 	c := &CompresorNingunoGenerico[float64]{}
 
-	testCases := []struct {
-		name    string
+	casosDePrueba := []struct {
+		nombre  string
 		valores []float64
 	}{
 		{"vacio", []float64{}},
@@ -55,8 +55,8 @@ func TestCompresorNinguno_Float64(t *testing.T) {
 		{"valores_especiales", []float64{math.Inf(1), math.Inf(-1), math.SmallestNonzeroFloat64}},
 	}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, tc := range casosDePrueba {
+		t.Run(tc.nombre, func(t *testing.T) {
 			comprimido, err := c.Comprimir(tc.valores)
 			require.NoError(t, err)
 
@@ -71,8 +71,8 @@ func TestCompresorNinguno_Float64(t *testing.T) {
 func TestCompresorNinguno_Bool(t *testing.T) {
 	c := &CompresorNingunoGenerico[bool]{}
 
-	testCases := []struct {
-		name    string
+	casosDePrueba := []struct {
+		nombre  string
 		valores []bool
 	}{
 		{"vacio", []bool{}},
@@ -83,8 +83,8 @@ func TestCompresorNinguno_Bool(t *testing.T) {
 		{"todos_false", []bool{false, false, false, false}},
 	}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, tc := range casosDePrueba {
+		t.Run(tc.nombre, func(t *testing.T) {
 			comprimido, err := c.Comprimir(tc.valores)
 			require.NoError(t, err)
 
@@ -99,8 +99,8 @@ func TestCompresorNinguno_Bool(t *testing.T) {
 func TestCompresorNinguno_String(t *testing.T) {
 	c := &CompresorNingunoGenerico[string]{}
 
-	testCases := []struct {
-		name    string
+	casosDePrueba := []struct {
+		nombre  string
 		valores []string
 	}{
 		{"vacio", []string{}},
@@ -111,8 +111,8 @@ func TestCompresorNinguno_String(t *testing.T) {
 		{"unicode", []string{"hola", "mundo", "unicode"}},
 	}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, tc := range casosDePrueba {
+		t.Run(tc.nombre, func(t *testing.T) {
 			comprimido, err := c.Comprimir(tc.valores)
 			require.NoError(t, err)
 
@@ -132,8 +132,8 @@ func TestCompresorNinguno_String(t *testing.T) {
 func TestCompresorRLE_Int64(t *testing.T) {
 	c := &CompresorRLEGenerico[int64]{}
 
-	testCases := []struct {
-		name    string
+	casosDePrueba := []struct {
+		nombre  string
 		valores []int64
 	}{
 		{"vacio", []int64{}},
@@ -144,8 +144,8 @@ func TestCompresorRLE_Int64(t *testing.T) {
 		{"valores_negativos", []int64{-1, -1, 0, 0, 1, 1}},
 	}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, tc := range casosDePrueba {
+		t.Run(tc.nombre, func(t *testing.T) {
 			comprimido, err := c.Comprimir(tc.valores)
 			require.NoError(t, err)
 
@@ -160,8 +160,8 @@ func TestCompresorRLE_Int64(t *testing.T) {
 func TestCompresorRLE_Float64(t *testing.T) {
 	c := &CompresorRLEGenerico[float64]{}
 
-	testCases := []struct {
-		name    string
+	casosDePrueba := []struct {
+		nombre  string
 		valores []float64
 	}{
 		{"vacio", []float64{}},
@@ -170,8 +170,8 @@ func TestCompresorRLE_Float64(t *testing.T) {
 		{"sin_repeticion", []float64{1.1, 2.2, 3.3}},
 	}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, tc := range casosDePrueba {
+		t.Run(tc.nombre, func(t *testing.T) {
 			comprimido, err := c.Comprimir(tc.valores)
 			require.NoError(t, err)
 
@@ -186,8 +186,8 @@ func TestCompresorRLE_Float64(t *testing.T) {
 func TestCompresorRLE_Bool(t *testing.T) {
 	c := &CompresorRLEGenerico[bool]{}
 
-	testCases := []struct {
-		name    string
+	casosDePrueba := []struct {
+		nombre  string
 		valores []bool
 	}{
 		{"vacio", []bool{}},
@@ -198,8 +198,8 @@ func TestCompresorRLE_Bool(t *testing.T) {
 		{"todos_false", []bool{false, false, false, false}},
 	}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, tc := range casosDePrueba {
+		t.Run(tc.nombre, func(t *testing.T) {
 			comprimido, err := c.Comprimir(tc.valores)
 			require.NoError(t, err)
 
@@ -214,8 +214,8 @@ func TestCompresorRLE_Bool(t *testing.T) {
 func TestCompresorRLE_String(t *testing.T) {
 	c := &CompresorRLEGenerico[string]{}
 
-	testCases := []struct {
-		name    string
+	casosDePrueba := []struct {
+		nombre  string
 		valores []string
 	}{
 		{"vacio", []string{}},
@@ -225,8 +225,8 @@ func TestCompresorRLE_String(t *testing.T) {
 		{"strings_vacios", []string{"", "", ""}},
 	}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, tc := range casosDePrueba {
+		t.Run(tc.nombre, func(t *testing.T) {
 			comprimido, err := c.Comprimir(tc.valores)
 			require.NoError(t, err)
 
@@ -268,8 +268,8 @@ func TestCompresorRLE_EficienciaCompresion(t *testing.T) {
 func TestCompresorDeltaDelta_Int64(t *testing.T) {
 	c := &CompresorDeltaDeltaGenerico[int64]{}
 
-	testCases := []struct {
-		name    string
+	casosDePrueba := []struct {
+		nombre  string
 		valores []int64
 	}{
 		{"vacio", []int64{}},
@@ -282,8 +282,8 @@ func TestCompresorDeltaDelta_Int64(t *testing.T) {
 		{"valores_negativos", []int64{-100, -50, 0, 50, 100}},
 	}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, tc := range casosDePrueba {
+		t.Run(tc.nombre, func(t *testing.T) {
 			comprimido, err := c.Comprimir(tc.valores)
 			require.NoError(t, err)
 
@@ -298,8 +298,8 @@ func TestCompresorDeltaDelta_Int64(t *testing.T) {
 func TestCompresorDeltaDelta_Float64(t *testing.T) {
 	c := &CompresorDeltaDeltaGenerico[float64]{}
 
-	testCases := []struct {
-		name    string
+	casosDePrueba := []struct {
+		nombre  string
 		valores []float64
 	}{
 		{"vacio", []float64{}},
@@ -309,8 +309,8 @@ func TestCompresorDeltaDelta_Float64(t *testing.T) {
 		{"valores_aleatorios", []float64{1.5, 2.7, 3.2, 4.8, 5.1}},
 	}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, tc := range casosDePrueba {
+		t.Run(tc.nombre, func(t *testing.T) {
 			comprimido, err := c.Comprimir(tc.valores)
 			require.NoError(t, err)
 
@@ -349,8 +349,8 @@ func TestCompresorDeltaDelta_EficienciaSerieMnotona(t *testing.T) {
 func TestCompresorBits_Int64(t *testing.T) {
 	c := &CompresorBitsGenerico[int64]{}
 
-	testCases := []struct {
-		name    string
+	casosDePrueba := []struct {
+		nombre  string
 		valores []int64
 	}{
 		{"vacio", []int64{}},
@@ -361,8 +361,8 @@ func TestCompresorBits_Int64(t *testing.T) {
 		{"valores_negativos", []int64{-10, -5, 0, 5, 10}},
 	}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, tc := range casosDePrueba {
+		t.Run(tc.nombre, func(t *testing.T) {
 			comprimido, err := c.Comprimir(tc.valores)
 			require.NoError(t, err)
 
@@ -401,8 +401,8 @@ func TestCompresorBits_EficienciaRangoPequeno(t *testing.T) {
 func TestCompresorXor_Float64(t *testing.T) {
 	c := &CompresorXor{}
 
-	testCases := []struct {
-		name    string
+	casosDePrueba := []struct {
+		nombre  string
 		valores []float64
 	}{
 		{"vacio", []float64{}},
@@ -414,8 +414,8 @@ func TestCompresorXor_Float64(t *testing.T) {
 		{"valores_mixtos", []float64{1.0, -1.0, 2.0, -2.0, 3.0}},
 	}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, tc := range casosDePrueba {
+		t.Run(tc.nombre, func(t *testing.T) {
 			comprimido, err := c.Comprimir(tc.valores)
 			require.NoError(t, err)
 
@@ -458,8 +458,8 @@ func TestCompresorXor_EficienciaValoresSimilares(t *testing.T) {
 func TestCompresorDiccionario_String(t *testing.T) {
 	c := &CompresorDiccionario{}
 
-	testCases := []struct {
-		name    string
+	casosDePrueba := []struct {
+		nombre  string
 		valores []string
 	}{
 		{"vacio", []string{}},
@@ -470,8 +470,8 @@ func TestCompresorDiccionario_String(t *testing.T) {
 		{"estados_tipicos", []string{"error", "ok", "warning", "ok", "error", "ok"}},
 	}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, tc := range casosDePrueba {
+		t.Run(tc.nombre, func(t *testing.T) {
 			comprimido, err := c.Comprimir(tc.valores)
 			require.NoError(t, err)
 
@@ -504,10 +504,10 @@ func TestCompresorDiccionario_EficienciaVocabularioLimitado(t *testing.T) {
 }
 
 // =============================================================================
-// Tests de casos edge
+// Tests de casos borde
 // =============================================================================
 
-func TestCompresores_CasosEdge_ValoresExtremos(t *testing.T) {
+func TestCompresores_CasosBorde_ValoresExtremos(t *testing.T) {
 	t.Run("int64_extremos", func(t *testing.T) {
 		c := &CompresorNingunoGenerico[int64]{}
 		valores := []int64{math.MinInt64, -1, 0, 1, math.MaxInt64}
@@ -535,7 +535,7 @@ func TestCompresores_CasosEdge_ValoresExtremos(t *testing.T) {
 	})
 }
 
-func TestCompresores_CasosEdge_ArrayGrande(t *testing.T) {
+func TestCompresores_CasosBorde_ArrayGrande(t *testing.T) {
 	t.Run("1000_elementos_int64", func(t *testing.T) {
 		c := &CompresorNingunoGenerico[int64]{}
 		valores := make([]int64, 1000)
@@ -783,9 +783,9 @@ func TestCompresorBloque_Ninguna(t *testing.T) {
 }
 
 func TestObtenerCompresorBloque(t *testing.T) {
-	testCases := []struct {
+	casosDePrueba := []struct {
 		tipo     tipos.TipoCompresionBloque
-		expected string
+		esperado string
 	}{
 		{tipos.LZ4, "*CompresorLZ4"},
 		{tipos.ZSTD, "*CompresorZSTD"},
@@ -795,8 +795,8 @@ func TestObtenerCompresorBloque(t *testing.T) {
 		{tipos.TipoCompresionBloque("desconocido"), "*CompresorBloqueNinguno"}, // default
 	}
 
-	for _, tc := range testCases {
-		t.Run(tc.expected, func(t *testing.T) {
+	for _, tc := range casosDePrueba {
+		t.Run(tc.esperado, func(t *testing.T) {
 			c := ObtenerCompresorBloque(tc.tipo)
 			assert.NotNil(t, c)
 		})
@@ -965,12 +965,12 @@ func TestCompresionTiempo_DeltaVariable(t *testing.T) {
 
 func TestCompresionTiempo_DeltasGrandes(t *testing.T) {
 	// Probar diferentes tamaños de delta-delta para cubrir flags 0x01, 0x02, 0x03
-	testCases := []struct {
-		name       string
+	casosDePrueba := []struct {
+		nombre     string
 		mediciones []tipos.Medicion
 	}{
 		{
-			name: "delta_2bytes", // flag 0x01
+			nombre: "delta_2bytes", // flag 0x01
 			mediciones: []tipos.Medicion{
 				{Tiempo: 1000000000, Valor: 1.0},
 				{Tiempo: 1000001000, Valor: 2.0},
@@ -979,7 +979,7 @@ func TestCompresionTiempo_DeltasGrandes(t *testing.T) {
 			},
 		},
 		{
-			name: "delta_4bytes", // flag 0x02
+			nombre: "delta_4bytes", // flag 0x02
 			mediciones: []tipos.Medicion{
 				{Tiempo: 1000000000, Valor: 1.0},
 				{Tiempo: 1000001000, Valor: 2.0},
@@ -988,7 +988,7 @@ func TestCompresionTiempo_DeltasGrandes(t *testing.T) {
 			},
 		},
 		{
-			name: "delta_8bytes", // flag 0x03
+			nombre: "delta_8bytes", // flag 0x03
 			mediciones: []tipos.Medicion{
 				{Tiempo: 1000000000, Valor: 1.0},
 				{Tiempo: 1000001000, Valor: 2.0},
@@ -998,8 +998,8 @@ func TestCompresionTiempo_DeltasGrandes(t *testing.T) {
 		},
 	}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, tc := range casosDePrueba {
+		t.Run(tc.nombre, func(t *testing.T) {
 			comprimido := CompresionDeltaDeltaTiempo(tc.mediciones)
 			require.NotEmpty(t, comprimido)
 
@@ -1024,8 +1024,8 @@ func TestDescompresionTiempo_DatosInsuficientes(t *testing.T) {
 // Tests para Funciones de Utilidad (compresion_utils.go)
 // =============================================================================
 
-func TestInt64ToBytes_BytesToInt64(t *testing.T) {
-	testCases := []int64{
+func TestInt64ABytes_BytesAInt64(t *testing.T) {
+	casosDePrueba := []int64{
 		0,
 		1,
 		-1,
@@ -1039,27 +1039,27 @@ func TestInt64ToBytes_BytesToInt64(t *testing.T) {
 		-1000000000000,
 	}
 
-	for _, val := range testCases {
-		bytes := Int64ToBytes(val)
-		result := BytesToInt64(bytes)
+	for _, val := range casosDePrueba {
+		bytes := Int64ABytes(val)
+		result := BytesAInt64(bytes)
 		assert.Equal(t, val, result)
 	}
 }
 
-func TestInt64ToBytes_BytesToInt64_Extremos(t *testing.T) {
+func TestInt64ABytes_BytesAInt64_Extremos(t *testing.T) {
 	// Valores extremos de int64
 	extremos := []int64{math.MinInt64, math.MaxInt64}
 
 	for _, val := range extremos {
-		bytes := Int64ToBytes(val)
-		result := BytesToInt64(bytes)
+		bytes := Int64ABytes(val)
+		result := BytesAInt64(bytes)
 		assert.Equal(t, val, result)
 	}
 }
 
-func TestBytesToInt64_DatosInsuficientes(t *testing.T) {
+func TestBytesAInt64_DatosInsuficientes(t *testing.T) {
 	// Con menos de 8 bytes debe retornar 0
-	result := BytesToInt64([]byte{1, 2, 3})
+	result := BytesAInt64([]byte{1, 2, 3})
 	assert.Equal(t, int64(0), result)
 }
 
@@ -1096,10 +1096,10 @@ func TestExtraerTiempos(t *testing.T) {
 }
 
 func TestConvertirAInt64Array(t *testing.T) {
-	testCases := []struct {
-		name     string
+	casosDePrueba := []struct {
+		nombre   string
 		input    []interface{}
-		expected []int64
+		esperado []int64
 	}{
 		{"int", []interface{}{int(1), int(2), int(3)}, []int64{1, 2, 3}},
 		{"int32", []interface{}{int32(10), int32(20)}, []int64{10, 20}},
@@ -1108,11 +1108,11 @@ func TestConvertirAInt64Array(t *testing.T) {
 		{"vacio", []interface{}{}, []int64{}},
 	}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, tc := range casosDePrueba {
+		t.Run(tc.nombre, func(t *testing.T) {
 			result, err := ConvertirAInt64Array(tc.input)
 			require.NoError(t, err)
-			assert.Equal(t, tc.expected, result)
+			assert.Equal(t, tc.esperado, result)
 		})
 	}
 }
@@ -1124,10 +1124,10 @@ func TestConvertirAInt64Array_Error(t *testing.T) {
 }
 
 func TestConvertirAFloat64Array(t *testing.T) {
-	testCases := []struct {
-		name     string
+	casosDePrueba := []struct {
+		nombre   string
 		input    []interface{}
-		expected []float64
+		esperado []float64
 	}{
 		{"float64", []interface{}{float64(1.5), float64(2.5)}, []float64{1.5, 2.5}},
 		{"float32", []interface{}{float32(1.5), float32(2.5)}, []float64{1.5, 2.5}},
@@ -1137,11 +1137,11 @@ func TestConvertirAFloat64Array(t *testing.T) {
 		{"vacio", []interface{}{}, []float64{}},
 	}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, tc := range casosDePrueba {
+		t.Run(tc.nombre, func(t *testing.T) {
 			result, err := ConvertirAFloat64Array(tc.input)
 			require.NoError(t, err)
-			assert.InDeltaSlice(t, tc.expected, result, 0.001)
+			assert.InDeltaSlice(t, tc.esperado, result, 0.001)
 		})
 	}
 }
@@ -1153,11 +1153,11 @@ func TestConvertirAFloat64Array_Error(t *testing.T) {
 
 func TestConvertirAStringArray(t *testing.T) {
 	input := []interface{}{"hola", "mundo", "test"}
-	expected := []string{"hola", "mundo", "test"}
+	esperado := []string{"hola", "mundo", "test"}
 
 	result, err := ConvertirAStringArray(input)
 	require.NoError(t, err)
-	assert.Equal(t, expected, result)
+	assert.Equal(t, esperado, result)
 }
 
 func TestConvertirAStringArray_Error(t *testing.T) {
@@ -1166,10 +1166,10 @@ func TestConvertirAStringArray_Error(t *testing.T) {
 }
 
 func TestConvertirABoolArray(t *testing.T) {
-	testCases := []struct {
-		name     string
+	casosDePrueba := []struct {
+		nombre   string
 		input    []interface{}
-		expected []bool
+		esperado []bool
 	}{
 		{"bool", []interface{}{true, false, true}, []bool{true, false, true}},
 		{"int", []interface{}{int(0), int(1), int(0)}, []bool{false, true, false}},
@@ -1178,11 +1178,11 @@ func TestConvertirABoolArray(t *testing.T) {
 		{"vacio", []interface{}{}, []bool{}},
 	}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, tc := range casosDePrueba {
+		t.Run(tc.nombre, func(t *testing.T) {
 			result, err := ConvertirABoolArray(tc.input)
 			require.NoError(t, err)
-			assert.Equal(t, tc.expected, result)
+			assert.Equal(t, tc.esperado, result)
 		})
 	}
 }

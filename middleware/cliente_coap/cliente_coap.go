@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"log"
 	"net/url"
+	"sync"
+	"time"
 
 	"github.com/plgd-dev/go-coap/v3/message"
 	"github.com/plgd-dev/go-coap/v3/message/pool"
@@ -13,46 +15,80 @@ import (
 	"github.com/plgd-dev/go-coap/v3/udp"
 	"github.com/plgd-dev/go-coap/v3/udp/client"
 	"github.com/sensorwave-dev/sensorwave/middleware"
-	"github.com/sensorwave-dev/sensorwave/middleware/internal/mensaje"
 )
 
 var ruta string = "/sensorwave"
 
+// Constantes de reconexión
+const (
+	maxIntentosReconexion = 5
+	backoffInicial        = 1 * time.Second
+	backoffFactor         = 2
+)
+
 // tipo del cliente
 type ClienteCoAP struct {
-	cliente *client.Conn
+	cliente       *client.Conn
+	direccion     string
+	mu            sync.Mutex
+	observaciones map[string]obs.Observation
+	// Guardar callbacks para re-observación tras reconexión
+	callbacks map[string]middleware.CallbackFunc
 }
 
-// almacena suscripciones del cliente
-var observaciones = make(map[string]obs.Observation)
-
-// conectar cliente
+// conectar cliente con backoff exponencial
 func Conectar(direccion string, puerto string) *ClienteCoAP {
 	servidor := direccion + ":" + puerto
-	log.Println("Conectandose a: ", servidor)
-	cliente, err := udp.Dial(servidor)
-	if err != nil {
-		log.Fatalf("Error al conectarse: %v", err)
+
+	c := &ClienteCoAP{
+		direccion:     servidor,
+		observaciones: make(map[string]obs.Observation),
+		callbacks:     make(map[string]middleware.CallbackFunc),
 	}
-	return &ClienteCoAP{cliente: cliente}
+
+	delay := backoffInicial
+	for intento := 1; intento <= maxIntentosReconexion; intento++ {
+		conn, err := udp.Dial(servidor)
+		if err == nil {
+			c.cliente = conn
+			return c
+		}
+		log.Printf("Error al conectarse (intento %d/%d): %v",
+			intento, maxIntentosReconexion, err)
+		if intento < maxIntentosReconexion {
+			log.Printf("Reintentando en %v...", delay)
+			time.Sleep(delay)
+			delay *= backoffFactor
+		}
+	}
+
+	log.Fatalf("No se pudo conectar al servidor CoAP después de %d intentos", maxIntentosReconexion)
+	return nil // unreachable
 }
 
 // cerrar cliente
 func (c *ClienteCoAP) Desconectar() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	c.cliente.Close()
+	c.observaciones = make(map[string]obs.Observation)
+	c.callbacks = make(map[string]middleware.CallbackFunc)
 }
 
 // publicar
 func (c *ClienteCoAP) Publicar(topico string, payload interface{}, opciones ...middleware.PublicarOpcion) {
-	mensaje, err := mensaje.Construir(topico, payload, opciones...)
+	mensaje, err := middleware.Construir(topico, payload, opciones...)
 	if err != nil {
-		log.Fatalf("Error al construir mensaje: %v", err)
+		log.Printf("Error al construir mensaje: %v", err)
+		return
 	}
 
 	// Serializar el mensaje a JSON
 	mensajeBytes, err := json.Marshal(mensaje)
 	if err != nil {
-		log.Fatalf("Error al serializar el mensaje: %v", err)
+		log.Printf("Error al serializar el mensaje: %v", err)
+		return
 	}
 
 	// publicar en el recurso
@@ -60,7 +96,8 @@ func (c *ClienteCoAP) Publicar(topico string, payload interface{}, opciones ...m
 	query := message.Option{ID: message.URIQuery, Value: []byte("topico=" + url.QueryEscape(topico))}
 	req, err := c.cliente.NewPostRequest(ctx, ruta, message.TextPlain, bytes.NewReader(mensajeBytes), query)
 	if err != nil {
-		log.Fatalf("Error al crear la solicitud: %v", err)
+		log.Printf("Error al crear la solicitud: %v", err)
+		return
 	}
 	if mensaje.QoS == 1 {
 		req.SetType(message.Confirmable)
@@ -69,49 +106,55 @@ func (c *ClienteCoAP) Publicar(topico string, payload interface{}, opciones ...m
 	}
 	_, err = c.cliente.Do(req)
 	if err != nil {
-		log.Fatalf("Error : %v", err)
+		log.Printf("Error al publicar en %s: %v", topico, err)
 	}
 }
 
 // suscribir a tópico
-// A futuro si ya estoy suscripto, primero desuscribir y luego suscribir
 func (c *ClienteCoAP) Suscribir(topico string, callback middleware.CallbackFunc) {
 	// subscribe al recurso
 	ctx := context.Background()
 	query := message.Option{ID: message.URIQuery, Value: []byte("topico=" + url.QueryEscape(topico))}
-	internalCallback := func(msg *pool.Message) {
+	callbackInterno := func(msg *pool.Message) {
 		var mensaje middleware.Mensaje
 		if p, err := msg.ReadBody(); err == nil && len(p) > 0 {
 			err := json.Unmarshal(p, &mensaje)
 			if err != nil {
-				log.Fatalf("Error al procesar el cuerpo de la solicitud: %v", err)
+				log.Printf("Error al procesar el cuerpo de la solicitud: %v", err)
 				return
 			}
 		}
 		// si es un mensaje interno, no lo procesamos
 		if mensaje.Interno {
-			log.Printf("Mensaje interno, ignorando")
 			return
 		}
-		callback(topico, string(mensaje.Payload))
+		callback(mensaje.Topico, mensaje.Payload)
 	}
-	obs, err := c.cliente.Observe(ctx, ruta, internalCallback, query)
+	observation, err := c.cliente.Observe(ctx, ruta, callbackInterno, query)
 	if err != nil {
-		log.Fatalf("Error : %v", err)
+		log.Printf("Error al observar %s: %v", topico, err)
+		return
 	}
-	observaciones[topico] = obs
+
+	c.mu.Lock()
+	c.observaciones[topico] = observation
+	c.callbacks[topico] = callback
+	c.mu.Unlock()
 }
 
 // se desuscribe a un topico
 func (c *ClienteCoAP) Desuscribir(topico string) {
-	obs, ok := observaciones[topico]
+	c.mu.Lock()
+	observation, ok := c.observaciones[topico]
 	if !ok {
-		log.Printf("No hay observación activa en %s", topico)
+		c.mu.Unlock()
 		return
 	}
-	if err := obs.Cancel(context.Background()); err != nil {
-		log.Printf("Error al cancelar %s: %v", topico, err)
-		return
+	delete(c.observaciones, topico)
+	delete(c.callbacks, topico)
+	c.mu.Unlock()
+
+	if err := observation.Cancel(context.Background()); err != nil {
+		log.Printf("Error al cancelar observación de %s: %v", topico, err)
 	}
-	delete(observaciones, topico)
 }

@@ -7,7 +7,7 @@ import (
 )
 
 // DescomprimirBloqueSerie descomprime un bloque de datos de serie temporal.
-// Esta función es usada tanto por el edge como por el despachador para lectura de datos.
+// Esta función es usada tanto por el borde como por el despachador para lectura de datos.
 //
 // Parámetros:
 //   - datosComprimidos: bloque de datos comprimido

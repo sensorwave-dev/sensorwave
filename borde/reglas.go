@@ -1,4 +1,4 @@
-package edge
+package borde
 
 import (
 	"fmt"
@@ -32,7 +32,7 @@ const (
 	AgregacionMaximo   = tipos.AgregacionMaximo
 	AgregacionMinimo   = tipos.AgregacionMinimo
 	AgregacionSuma     = tipos.AgregacionSuma
-	AgregacionCount    = tipos.AgregacionCount
+	AgregacionConteo   = tipos.AgregacionConteo
 )
 
 type TipoLogica string
@@ -74,9 +74,9 @@ type Condicion struct {
 }
 
 type Accion struct {
-	Tipo    string
-	Destino string
-	Params  map[string]string
+	Tipo       string
+	Destino    string
+	Parametros map[string]string
 }
 
 type Regla struct {
@@ -96,7 +96,7 @@ type MotorReglas struct {
 	ejecutores map[string]EjecutorAccion
 	habilitado bool
 	mu         sync.RWMutex
-	manager    *ManagerEdge // Referencia al manager padre (para acceso a datos)
+	gestor     *GestorBorde // Referencia al gestor padre (para acceso a datos)
 	db         *pebble.DB   // Conexión a PebbleDB para persistencia de reglas
 }
 
@@ -126,12 +126,12 @@ func (mr *MotorReglas) ObtenerEstado() EstadoMotorReglas {
 	}
 }
 
-func nuevoMotorReglasIntegrado(manager *ManagerEdge, db *pebble.DB) *MotorReglas {
+func nuevoMotorReglasIntegrado(gestor *GestorBorde, db *pebble.DB) *MotorReglas {
 	motor := &MotorReglas{
 		reglas:     make(map[string]*Regla),
 		ejecutores: make(map[string]EjecutorAccion),
 		habilitado: true,
-		manager:    manager,
+		gestor:     gestor,
 		db:         db,
 	}
 
@@ -146,8 +146,8 @@ func (mr *MotorReglas) registrarEjecutoresPorDefecto() {
 			regla.ID, accion.Tipo, accion.Destino, valores)
 		return nil
 	}
-	// Nota: Para publicar a actuadores usar PUBLICAR_MQTT, PUBLICAR_NATS, PUBLICAR_HTTP o PUBLICAR_COAP
-	// registrados via RegistrarEjecutorMQTT(), RegistrarEjecutorNATS(), etc. en ejecutores.go
+	// Nota: Para publicar a actuadores usar PUBLICAR_MQTT, PUBLICAR_HTTP o PUBLICAR_COAP
+	// registrados via RegistrarEjecutorMQTT(), RegistrarEjecutorHTTP(), RegistrarEjecutorCoAP() en ejecutores.go
 }
 
 func (mr *MotorReglas) evaluarReglas(timestamp time.Time) error {
@@ -220,22 +220,22 @@ func CalcularAgregacionSimple(valores []float64, agregacion TipoAgregacion) (flo
 		return suma / float64(len(valores)), nil
 
 	case AgregacionMaximo:
-		max := valores[0]
+		maximo := valores[0]
 		for _, v := range valores[1:] {
-			if v > max {
-				max = v
+			if v > maximo {
+				maximo = v
 			}
 		}
-		return max, nil
+		return maximo, nil
 
 	case AgregacionMinimo:
-		min := valores[0]
+		minimo := valores[0]
 		for _, v := range valores[1:] {
-			if v < min {
-				min = v
+			if v < minimo {
+				minimo = v
 			}
 		}
-		return min, nil
+		return minimo, nil
 
 	case AgregacionSuma:
 		suma := 0.0
@@ -244,7 +244,7 @@ func CalcularAgregacionSimple(valores []float64, agregacion TipoAgregacion) (flo
 		}
 		return suma, nil
 
-	case AgregacionCount:
+	case AgregacionConteo:
 		return float64(len(valores)), nil
 
 	default:
@@ -261,7 +261,7 @@ func (mr *MotorReglas) evaluarCondicion(condicion *Condicion, timestamp time.Tim
 
 	if agregacionVacia {
 		// Sin agregación (o "last") = obtener último valor en ventana
-		resultado, err := mr.manager.ConsultarUltimoPunto(condicion.Path, &tiempoInicio, &timestamp)
+		resultado, err := mr.gestor.ConsultarUltimoPunto(condicion.Path, &tiempoInicio, &timestamp)
 		if err != nil || len(resultado.Valores) == 0 {
 			return false
 		}
@@ -281,7 +281,7 @@ func (mr *MotorReglas) evaluarCondicion(condicion *Condicion, timestamp time.Tim
 	}
 
 	// Con agregación: usar ConsultarAgregacion
-	resultado, err := mr.manager.ConsultarAgregacion(condicion.Path, tiempoInicio, timestamp, []tipos.TipoAgregacion{condicion.Agregacion})
+	resultado, err := mr.gestor.ConsultarAgregacion(condicion.Path, tiempoInicio, timestamp, []tipos.TipoAgregacion{condicion.Agregacion})
 	if err != nil || len(resultado.Valores) == 0 || len(resultado.Valores[0]) == 0 {
 		return false
 	}
@@ -407,7 +407,7 @@ func (mr *MotorReglas) ejecutarAcciones(regla *Regla, timestamp time.Time) error
 		tiempoInicio := timestamp.Add(-condicion.VentanaT)
 
 		// Usar ConsultarUltimoPunto para obtener los valores actuales
-		resultado, err := mr.manager.ConsultarUltimoPunto(condicion.Path, &tiempoInicio, &timestamp)
+		resultado, err := mr.gestor.ConsultarUltimoPunto(condicion.Path, &tiempoInicio, &timestamp)
 		if err != nil {
 			continue
 		}
@@ -437,8 +437,8 @@ func (mr *MotorReglas) ejecutarAcciones(regla *Regla, timestamp time.Time) error
 	valores["_timestamp"] = timestamp
 
 	for _, accion := range regla.Acciones {
-		ejecutor, exists := mr.ejecutores[accion.Tipo]
-		if !exists {
+		ejecutor, existe := mr.ejecutores[accion.Tipo]
+		if !existe {
 			log.Printf("Ejecutor no encontrado para tipo de acción: %s", accion.Tipo)
 			continue
 		}
@@ -562,7 +562,7 @@ func (mr *MotorReglas) validarCondicion(condicion *Condicion) error {
 	if condicion.Agregacion != "" && condicion.Agregacion != "last" {
 		agregacionesValidas := []TipoAgregacion{
 			AgregacionPromedio, AgregacionMaximo, AgregacionMinimo,
-			AgregacionSuma, AgregacionCount,
+			AgregacionSuma, AgregacionConteo,
 		}
 		agregacionValida := false
 		for _, agg := range agregacionesValidas {
@@ -578,7 +578,7 @@ func (mr *MotorReglas) validarCondicion(condicion *Condicion) error {
 
 	// VALIDACIÓN 8: Verificar compatibilidad de tipos con agregación
 	// Solo validar para agregaciones numéricas (no para "" ni "last" ni "count")
-	if condicion.Agregacion != "" && condicion.Agregacion != "last" && condicion.Agregacion != AgregacionCount {
+	if condicion.Agregacion != "" && condicion.Agregacion != "last" && condicion.Agregacion != AgregacionConteo {
 		if err := mr.validarAgregacionCompatible(condicion); err != nil {
 			return err
 		}
@@ -590,12 +590,12 @@ func (mr *MotorReglas) validarCondicion(condicion *Condicion) error {
 // validarAgregacionCompatible verifica que la agregación sea compatible con los tipos de las series.
 // Usa el Path para resolver las series (puede incluir wildcards).
 func (mr *MotorReglas) validarAgregacionCompatible(condicion *Condicion) error {
-	if mr.manager == nil {
+	if mr.gestor == nil {
 		return nil // No podemos validar sin manager
 	}
 
 	// Resolver series por Path (puede ser exacto o patrón wildcard)
-	series, err := mr.manager.ListarSeriesPorPath(condicion.Path)
+	series, err := mr.gestor.ListarSeriesPorPath(condicion.Path)
 	if err != nil {
 		// Si no se pueden resolver las series, no validar estrictamente
 		return nil
@@ -646,8 +646,8 @@ func (mr *MotorReglas) validarAccion(accion *Accion) error {
 		return fmt.Errorf("plantilla de destino inválida: %v", err)
 	}
 
-	// Validar que variables requeridas estén en Params (excepto las de contexto)
-	if err := ValidarVariablesRequeridas(accion.Destino, accion.Params); err != nil {
+	// Validar que variables requeridas estén en Parametros (excepto las de contexto)
+	if err := ValidarVariablesRequeridas(accion.Destino, accion.Parametros); err != nil {
 		return fmt.Errorf("variables faltantes en params: %v", err)
 	}
 
@@ -669,8 +669,8 @@ func (mr *MotorReglas) ObtenerRegla(id string) (*Regla, error) {
 	mr.mu.RLock()
 	defer mr.mu.RUnlock()
 
-	regla, exists := mr.reglas[id]
-	if !exists {
+	regla, existe := mr.reglas[id]
+	if !existe {
 		return nil, fmt.Errorf("regla '%s' no encontrada", id)
 	}
 
@@ -691,7 +691,7 @@ func (mr *MotorReglas) EliminarReglaEnMemoria(id string) error {
 	mr.mu.Lock()
 	defer mr.mu.Unlock()
 
-	if _, exists := mr.reglas[id]; !exists {
+	if _, existe := mr.reglas[id]; !existe {
 		return fmt.Errorf("regla '%s' no encontrada", id)
 	}
 
@@ -704,7 +704,7 @@ func (mr *MotorReglas) ActualizarReglaEnMemoria(regla *Regla) error {
 	mr.mu.Lock()
 	defer mr.mu.Unlock()
 
-	if _, exists := mr.reglas[regla.ID]; !exists {
+	if _, existe := mr.reglas[regla.ID]; !existe {
 		return fmt.Errorf("regla '%s' no encontrada", regla.ID)
 	}
 
@@ -764,13 +764,13 @@ func (mr *MotorReglas) AgregarRegla(regla *Regla) error {
 	}
 
 	if mr.db != nil {
-		key := generarClaveRegla(regla.ID)
+		clave := generarClaveRegla(regla.ID)
 		reglaBytes, err := serializarRegla(regla)
 		if err != nil {
 			return fmt.Errorf("error al serializar regla: %v", err)
 		}
 
-		err = mr.db.Set(key, reglaBytes, pebble.Sync)
+		err = mr.db.Set(clave, reglaBytes, pebble.Sync)
 		if err != nil {
 			return fmt.Errorf("error al guardar regla: %v", err)
 		}
@@ -784,8 +784,8 @@ func (mr *MotorReglas) AgregarRegla(regla *Regla) error {
 	log.Printf("Regla '%s' agregada exitosamente", regla.ID)
 
 	// Actualizar S3 (best-effort, igual que CrearSerie)
-	if mr.manager != nil && clienteS3 != nil {
-		if err := mr.manager.RegistrarEnS3(); err != nil {
+	if mr.gestor != nil && clienteS3 != nil {
+		if err := mr.gestor.RegistrarEnS3(); err != nil {
 			log.Printf("Error registrando regla nueva en S3: %v", err)
 			// No retornar error - la regla ya fue guardada localmente
 		}
@@ -796,8 +796,8 @@ func (mr *MotorReglas) AgregarRegla(regla *Regla) error {
 
 func (mr *MotorReglas) EliminarRegla(id string) error {
 	if mr.db != nil {
-		key := generarClaveRegla(id)
-		err := mr.db.Delete(key, pebble.Sync)
+		clave := generarClaveRegla(id)
+		err := mr.db.Delete(clave, pebble.Sync)
 		if err != nil {
 			return fmt.Errorf("error al eliminar regla de DB: %v", err)
 		}
@@ -810,8 +810,8 @@ func (mr *MotorReglas) EliminarRegla(id string) error {
 	log.Printf("Regla '%s' eliminada", id)
 
 	// Actualizar S3 (best-effort)
-	if mr.manager != nil && clienteS3 != nil {
-		if err := mr.manager.RegistrarEnS3(); err != nil {
+	if mr.gestor != nil && clienteS3 != nil {
+		if err := mr.gestor.RegistrarEnS3(); err != nil {
 			log.Printf("Error registrando eliminación de regla en S3: %v", err)
 		}
 	}
@@ -829,13 +829,13 @@ func (mr *MotorReglas) ActualizarRegla(regla *Regla) error {
 	}
 
 	if mr.db != nil {
-		key := generarClaveRegla(regla.ID)
+		clave := generarClaveRegla(regla.ID)
 		reglaBytes, err := serializarRegla(regla)
 		if err != nil {
 			return fmt.Errorf("error al serializar regla: %v", err)
 		}
 
-		err = mr.db.Set(key, reglaBytes, pebble.Sync)
+		err = mr.db.Set(clave, reglaBytes, pebble.Sync)
 		if err != nil {
 			return fmt.Errorf("error al actualizar regla en DB: %v", err)
 		}
@@ -848,9 +848,55 @@ func (mr *MotorReglas) ActualizarRegla(regla *Regla) error {
 	log.Printf("Regla '%s' actualizada", regla.ID)
 
 	// Actualizar S3 (best-effort)
-	if mr.manager != nil && clienteS3 != nil {
-		if err := mr.manager.RegistrarEnS3(); err != nil {
+	if mr.gestor != nil && clienteS3 != nil {
+		if err := mr.gestor.RegistrarEnS3(); err != nil {
 			log.Printf("Error registrando regla actualizada en S3: %v", err)
+		}
+	}
+
+	return nil
+}
+
+// HabilitarRegla activa o desactiva una regla por su ID
+// Actualiza el campo Activa y persiste el cambio en la base de datos
+func (mr *MotorReglas) HabilitarRegla(id string, habilitada bool) error {
+	mr.mu.Lock()
+	defer mr.mu.Unlock()
+
+	regla, existe := mr.reglas[id]
+	if !existe {
+		return fmt.Errorf("regla '%s' no encontrada", id)
+	}
+
+	// Actualizar el estado
+	regla.Activa = habilitada
+
+	// Persistir el cambio en la base de datos
+	if mr.db != nil {
+		clave := generarClaveRegla(id)
+		reglaBytes, err := serializarRegla(regla)
+		if err != nil {
+			return fmt.Errorf("error al serializar regla: %v", err)
+		}
+
+		err = mr.db.Set(clave, reglaBytes, pebble.Sync)
+		if err != nil {
+			// Revertir el cambio en memoria en caso de error
+			regla.Activa = !habilitada
+			return fmt.Errorf("error al actualizar estado de regla en DB: %v", err)
+		}
+	}
+
+	estado := "habilitada"
+	if !habilitada {
+		estado = "deshabilitada"
+	}
+	log.Printf("Regla '%s' %s", id, estado)
+
+	// Actualizar S3 (best-effort)
+	if mr.gestor != nil && clienteS3 != nil {
+		if err := mr.gestor.RegistrarEnS3(); err != nil {
+			log.Printf("Error registrando cambio de estado de regla en S3: %v", err)
 		}
 	}
 

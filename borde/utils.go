@@ -1,4 +1,4 @@
-package edge
+package borde
 
 import (
 	"bufio"
@@ -71,20 +71,20 @@ func obtenerIPPrincipal() (string, error) {
 	return "", fmt.Errorf("obtenerIPPrincipal se ha deprecado en favor de cloudflared")
 }
 
-// generarNodoID genera un ID único para el nodo edge
+// generarNodoID genera un ID único para el nodo borde
 func generarNodoID() string {
 	hostname, err := os.Hostname()
 	if err != nil {
 		hostname = "unknown"
 	}
 	UUID := uuid.New().String()
-	return fmt.Sprintf("edge-%s-%s", hostname, UUID)
+	return fmt.Sprintf("borde-%s-%s", hostname, UUID)
 }
 
 // generarClaveDatos genera una clave PebbleDB incluyendo el tipo de datos
 func generarClaveDatos(serieId int, tiempoInicio, tiempoFin int64) []byte {
-	key := fmt.Sprintf("data/%010d/%020d_%020d", serieId, tiempoInicio, tiempoFin)
-	return []byte(key)
+	clave := fmt.Sprintf("data/%010d/%020d_%020d", serieId, tiempoInicio, tiempoFin)
+	return []byte(clave)
 }
 
 // esPathValido valida que un path de serie tenga el formato correcto
@@ -180,14 +180,14 @@ func iniciarTunnelCloudflared(puerto string) (string, *exec.Cmd, error) {
 	}
 }
 
-// matchTags verifica si una serie tiene todos los tags especificados
-func matchTags(serieTags, filterTags map[string]string) bool {
+// coincidirTags verifica si una serie tiene todos los tags especificados
+func coincidirTags(serieTags, filterTags map[string]string) bool {
 	if len(filterTags) == 0 {
 		return true
 	}
 
-	for key, value := range filterTags {
-		if serieValue, existe := serieTags[key]; !existe || serieValue != value {
+	for clave, valor := range filterTags {
+		if serieValue, existe := serieTags[clave]; !existe || serieValue != valor {
 			return false
 		}
 	}

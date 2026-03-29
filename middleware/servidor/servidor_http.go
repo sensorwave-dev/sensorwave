@@ -11,7 +11,7 @@ import (
 
 type Cliente struct {
 	ID      string
-	Channel chan string
+	Canal   chan Mensaje
 	cerrado bool
 	mu      sync.Mutex
 
@@ -28,9 +28,9 @@ var (
 const LOG_HTTP string = "HTTP"
 
 const (
-	ackTimeout      = 2 * time.Second
-	ackRandomFactor = 1.5
-	maxRetransmit   = 4
+	ackTimeout         = 2 * time.Second
+	factorAleatorioAck = 1.5
+	maxRetransmisiones = 4
 )
 
 // IniciarHTTP inicia un servidor HTTP en el puerto especificado.
@@ -52,10 +52,20 @@ func IniciarHTTP(puerto string) <-chan struct{} {
 			loggerFatal(LOG_HTTP, "Error al iniciar listener: %v", err)
 		}
 
-		loggerPrint(LOG_HTTP, "Servidor HTTP escuchando en :"+puerto)
+		// Configurar servidor HTTP con timeouts apropiados para SSE
+		// ReadTimeout: 0 (sin límite) para permitir conexiones largas
+		// WriteTimeout: 0 (sin límite) para permitir streaming SSE indefinido
+		server := &http.Server{
+			Handler:      mux,
+			ReadTimeout:  0, // Sin timeout de lectura
+			WriteTimeout: 0, // Sin timeout de escritura (crítico para SSE)
+			IdleTimeout:  0, // Sin timeout de idle
+		}
+
+		loggerPrint(LOG_HTTP, "Servidor iniciado - Puerto: %s", puerto)
 		close(listo) // Señalizar que está listo para aceptar conexiones
 
-		http.Serve(listener, mux)
+		server.Serve(listener)
 	}()
 
 	return listo
@@ -63,7 +73,6 @@ func IniciarHTTP(puerto string) <-chan struct{} {
 
 // manejador es el punto de entrada para todas las solicitudes HTTP
 func manejadorHTTP(w http.ResponseWriter, r *http.Request) {
-	loggerPrint(LOG_HTTP, "Solicitud "+r.Method+r.URL.Path)
 	if r.Method == http.MethodGet {
 		manejarSuscripcionHTTP(w, r)
 	}
@@ -88,14 +97,19 @@ func manejarSuscripcionHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Configurar cabeceras SSE antes de escribir el status
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no") // Deshabilitar buffering de proxies como nginx
+
+	// Escribir status 200 explícitamente para iniciar la respuesta
+	w.WriteHeader(http.StatusOK)
 
 	clienteID := fmt.Sprintf("%d", time.Now().UnixNano())
 	cliente := &Cliente{
 		ID:         clienteID,
-		Channel:    make(chan string, 10000),
+		Canal:      make(chan Mensaje, 10000),
 		cerrado:    false,
 		pendientes: make(map[string]struct{}),
 	}
@@ -114,14 +128,57 @@ func manejarSuscripcionHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fmt.Fprintf(w, "data: {\"clienteID\":\"%s\"}\n\n", clienteID)
+	// Enviar mensaje inicial con clienteID y hacer flush inmediatamente
+	_, err = fmt.Fprintf(w, "data: {\"clienteID\":\"%s\"}\n\n", clienteID)
+	if err != nil {
+		loggerPrint(LOG_HTTP, "Error al enviar clienteID - ID: %s, Error: %v", clienteID, err)
+		return
+	}
 	flusher.Flush()
 
-	loggerPrint(LOG_HTTP, "Cliente "+clienteID+" conectado al tópico "+normalizado)
+	// Pequeña pausa para asegurar que el paquete TCP se envíe antes de que el cliente lea
+	time.Sleep(100 * time.Millisecond)
 
-	for msg := range cliente.Channel {
-		fmt.Fprintf(w, "data: %s\n\n", msg)
-		flusher.Flush()
+	loggerPrint(LOG_HTTP, "ClienteID enviado y flush realizado - ID: %s", clienteID)
+
+	loggerPrint(LOG_HTTP, "Cliente conectado - ID: %s, Tópico: %s", clienteID, normalizado)
+
+	// Crear ticker de keepalive para mantener la conexión viva (cada 5 segundos)
+	// Intervalo muy corto para evitar que routers/firewalls cierren la conexión TCP por inactividad
+	// Especialmente importante para clientes WiFi (ESP32) que atraviesan routers
+	keepaliveTicker := time.NewTicker(5 * time.Second)
+	defer keepaliveTicker.Stop()
+
+	// Loop principal: manejar mensajes del channel y keepalives
+	for {
+		select {
+		case msg, ok := <-cliente.Canal:
+			if !ok {
+				// Canal cerrado, salir del loop
+				loggerPrint(LOG_HTTP, "Canal cerrado para cliente - ID: %s", clienteID)
+				return
+			}
+			jsonBytes, err := json.Marshal(msg)
+			if err != nil {
+				loggerPrint(LOG_HTTP, "Error - No se pudo serializar mensaje: %v", err)
+				continue
+			}
+			_, err = fmt.Fprintf(w, "data: %s\n\n", string(jsonBytes))
+			if err != nil {
+				loggerPrint(LOG_HTTP, "Error al escribir mensaje al cliente - ID: %s, Error: %v", clienteID, err)
+				return
+			}
+			flusher.Flush()
+
+		case <-keepaliveTicker.C:
+			// Enviar comentario SSE (válido y no dispara callbacks) para mantener viva la conexión
+			_, err := fmt.Fprintf(w, ":keepalive\n\n")
+			if err != nil {
+				loggerPrint(LOG_HTTP, "Error al enviar keepalive - ID: %s, Error: %v", clienteID, err)
+				return
+			}
+			flusher.Flush()
+		}
 	}
 
 	mutexHTTP.Lock()
@@ -136,7 +193,7 @@ func manejarSuscripcionHTTP(w http.ResponseWriter, r *http.Request) {
 
 	cliente.mu.Lock()
 	if !cliente.cerrado {
-		close(cliente.Channel)
+		close(cliente.Canal)
 		cliente.cerrado = true
 	}
 	cliente.mu.Unlock()
@@ -145,7 +202,7 @@ func manejarSuscripcionHTTP(w http.ResponseWriter, r *http.Request) {
 	cliente.pendientes = make(map[string]struct{})
 	cliente.pendientesMu.Unlock()
 
-	loggerPrint(LOG_HTTP, "Cliente "+clienteID+" desconectado del tópico "+normalizado)
+	loggerPrint(LOG_HTTP, "Cliente desconectado - ID: %s, Tópico: %s", clienteID, normalizado)
 }
 
 // Manejar publicaciones de mensajes
@@ -190,7 +247,7 @@ func manejarPublicacionHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	mensaje.Topico = mensajeTopico
 
-	loggerPrint(LOG_HTTP, "Mensaje recibido en el tópico "+mensaje.Topico)
+	loggerPrint(LOG_HTTP, "Mensaje recibido - Tópico: %s, QoS: %d, MensajeID: %s", mensaje.Topico, mensaje.QoS, mensaje.MensajeID)
 
 	// enviar a los protocolos
 	if mensaje.Original {
@@ -204,7 +261,7 @@ func manejarPublicacionHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]string{
 			"ack":       "ok",
-			"messageId": mensaje.MessageID,
+			"mensajeId": mensaje.MensajeID,
 		})
 		return
 	}
@@ -242,7 +299,7 @@ func manejarDesuscripcionHTTP(w http.ResponseWriter, r *http.Request) {
 	if clienteEncontrado != nil {
 		clienteEncontrado.mu.Lock()
 		if !clienteEncontrado.cerrado {
-			close(clienteEncontrado.Channel)
+			close(clienteEncontrado.Canal)
 			clienteEncontrado.cerrado = true
 		}
 		clienteEncontrado.mu.Unlock()
@@ -251,22 +308,16 @@ func manejarDesuscripcionHTTP(w http.ResponseWriter, r *http.Request) {
 		clienteEncontrado.pendientes = make(map[string]struct{})
 		clienteEncontrado.pendientesMu.Unlock()
 
-		loggerPrint(LOG_HTTP, "Cliente "+clienteID+" desuscrito del tópico "+normalizado)
+		loggerPrint(LOG_HTTP, "Cliente desuscrito - ID: %s, Tópico: %s", clienteID, normalizado)
 		w.WriteHeader(http.StatusOK)
 	} else {
 		http.Error(w, "Cliente no encontrado", http.StatusNotFound)
 	}
 }
 
-type ackRequest struct {
+type solicitudAck struct {
 	ClienteID string `json:"clienteId"`
-	MessageID string `json:"messageId"`
-}
-
-type mensajeHTTP struct {
-	MessageID string `json:"messageId,omitempty"`
-	QoS       int    `json:"qos"`
-	Payload   string `json:"payload"`
+	MensajeID string `json:"mensajeId"`
 }
 
 func manejarAckHTTP(w http.ResponseWriter, r *http.Request) {
@@ -275,13 +326,13 @@ func manejarAckHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var ack ackRequest
+	var ack solicitudAck
 	if err := json.NewDecoder(r.Body).Decode(&ack); err != nil {
 		http.Error(w, "Error al procesar el cuerpo de la solicitud", http.StatusBadRequest)
 		return
 	}
-	if ack.ClienteID == "" || ack.MessageID == "" {
-		http.Error(w, "Faltan parámetros 'clienteId' o 'messageId'", http.StatusBadRequest)
+	if ack.ClienteID == "" || ack.MensajeID == "" {
+		http.Error(w, "Faltan parámetros 'clienteId' o 'mensajeId'", http.StatusBadRequest)
 		return
 	}
 
@@ -293,74 +344,61 @@ func manejarAckHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cliente.marcarAck(ack.MessageID)
-	loggerPrint(LOG_HTTP, "ACK recibido cliente=%s messageId=%s", ack.ClienteID, ack.MessageID)
+	cliente.marcarAck(ack.MensajeID)
+	loggerPrint(LOG_HTTP, "ACK recibido - ClienteID: %s, MensajeID: %s", ack.ClienteID, ack.MensajeID)
 	w.WriteHeader(http.StatusOK)
 }
 
-func serializarMensajeHTTP(m Mensaje) (string, error) {
-	msg := mensajeHTTP{
-		MessageID: m.MessageID,
-		QoS:       m.QoS,
-		Payload:   string(m.Payload),
-	}
-	data, err := json.Marshal(msg)
-	if err != nil {
-		return "", err
-	}
-	return string(data), nil
-}
-
-func enviarHTTPQoS1(LOG string, c *Cliente, mensaje string, messageID string) {
-	if messageID == "" {
-		loggerPrint(LOG, "QoS1 sin messageId, no se envia")
+func enviarHTTPQoS1(LOG string, c *Cliente, msg Mensaje) {
+	if msg.MensajeID == "" {
+		loggerPrint(LOG, "Error - QoS 1 sin MensajeID, no se envía")
 		return
 	}
-	if !c.registrarPendiente(messageID) {
+	if !c.registrarPendiente(msg.MensajeID) {
 		return
 	}
 
 	go func() {
 		delay := ackTimeout
-		for intento := 0; intento <= maxRetransmit; intento++ {
-			if !c.pendienteExiste(messageID) {
+		for intento := 0; intento <= maxRetransmisiones; intento++ {
+			if !c.pendienteExiste(msg.MensajeID) {
 				return
 			}
 			select {
-			case c.Channel <- mensaje:
-				loggerPrint(LOG, "Mensaje QoS1 enviado messageId=%s", messageID)
+			case c.Canal <- msg:
+				// Éxito silencioso - el ACK confirmará la recepción
 			default:
-				loggerPrint(LOG, "No se pudo enviar mensaje QoS1 messageId=%s (canal bloqueado)", messageID)
+				loggerPrint(LOG, "Error - No se pudo enviar mensaje QoS 1 - MensajeID: %s, Intento: %d, Razón: canal bloqueado", msg.MensajeID, intento)
 			}
-			if intento == maxRetransmit {
-				c.marcarAck(messageID)
+			if intento == maxRetransmisiones {
+				c.marcarAck(msg.MensajeID)
 				return
 			}
 			time.Sleep(delay)
-			delay = time.Duration(float64(delay) * ackRandomFactor)
+			delay = time.Duration(float64(delay) * factorAleatorioAck)
 		}
 	}()
 }
 
-func (c *Cliente) registrarPendiente(messageID string) bool {
+func (c *Cliente) registrarPendiente(mensajeID string) bool {
 	c.pendientesMu.Lock()
 	defer c.pendientesMu.Unlock()
-	if _, ok := c.pendientes[messageID]; ok {
+	if _, ok := c.pendientes[mensajeID]; ok {
 		return false
 	}
-	c.pendientes[messageID] = struct{}{}
+	c.pendientes[mensajeID] = struct{}{}
 	return true
 }
 
-func (c *Cliente) pendienteExiste(messageID string) bool {
+func (c *Cliente) pendienteExiste(mensajeID string) bool {
 	c.pendientesMu.Lock()
 	defer c.pendientesMu.Unlock()
-	_, ok := c.pendientes[messageID]
+	_, ok := c.pendientes[mensajeID]
 	return ok
 }
 
-func (c *Cliente) marcarAck(messageID string) {
+func (c *Cliente) marcarAck(mensajeID string) {
 	c.pendientesMu.Lock()
-	delete(c.pendientes, messageID)
+	delete(c.pendientes, mensajeID)
 	c.pendientesMu.Unlock()
 }

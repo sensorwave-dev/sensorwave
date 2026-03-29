@@ -65,23 +65,23 @@ func (c *CompresorBitsGenerico[T]) Comprimir(valores []T) ([]byte, error) {
 	// Convertir a int64 para cálculos
 	valoresInt := make([]int64, len(valores))
 	for i, v := range valores {
-		valoresInt[i] = toInt64(v)
+		valoresInt[i] = aInt64(v)
 	}
 
-	// Calcular min y max
-	min := valoresInt[0]
-	max := valoresInt[0]
+	// Calcular minimo y maximo
+	minimo := valoresInt[0]
+	maximo := valoresInt[0]
 	for _, v := range valoresInt {
-		if v < min {
-			min = v
+		if v < minimo {
+			minimo = v
 		}
-		if v > max {
-			max = v
+		if v > maximo {
+			maximo = v
 		}
 	}
 
 	// Calcular bits necesarios
-	rangeVal := max - min
+	rangeVal := maximo - minimo
 	var bitsNecesarios uint8
 
 	if rangeVal == 0 {
@@ -94,10 +94,10 @@ func (c *CompresorBitsGenerico[T]) Comprimir(valores []T) ([]byte, error) {
 
 	// Serializar header
 	var buffer bytes.Buffer
-	// Escribir count de valores (4 bytes)
+	// Escribir cantidad de valores (4 bytes)
 	binary.Write(&buffer, binary.LittleEndian, uint32(len(valores)))
-	binary.Write(&buffer, binary.LittleEndian, min)
-	binary.Write(&buffer, binary.LittleEndian, max)
+	binary.Write(&buffer, binary.LittleEndian, minimo)
+	binary.Write(&buffer, binary.LittleEndian, maximo)
 	buffer.WriteByte(bitsNecesarios)
 
 	// Si todos los valores son iguales, no necesitamos datos
@@ -106,14 +106,14 @@ func (c *CompresorBitsGenerico[T]) Comprimir(valores []T) ([]byte, error) {
 	}
 
 	// Empaquetar valores
-	writer := newBitWriter()
+	writer := nuevoEscritorBits()
 	for _, v := range valoresInt {
-		normalized := uint64(v - min)
-		writer.writeBits(normalized, int(bitsNecesarios))
+		normalized := uint64(v - minimo)
+		writer.escribirBits(normalized, int(bitsNecesarios))
 	}
 
 	// Agregar datos empaquetados
-	buffer.Write(writer.getBytes())
+	buffer.Write(writer.obtenerBytes())
 
 	return buffer.Bytes(), nil
 }
@@ -127,28 +127,28 @@ func (c *CompresorBitsGenerico[T]) Descomprimir(datos []byte) ([]T, error) {
 	reader := bytes.NewReader(datos)
 
 	// Leer header
-	var count uint32
-	var min, max int64
+	var cantidad uint32
+	var minimo, maximo int64
 	var bitsNecesarios uint8
 
-	if err := binary.Read(reader, binary.LittleEndian, &count); err != nil {
-		return nil, fmt.Errorf("error leyendo count: %v", err)
+	if err := binary.Read(reader, binary.LittleEndian, &cantidad); err != nil {
+		return nil, fmt.Errorf("error leyendo cantidad: %v", err)
 	}
-	if err := binary.Read(reader, binary.LittleEndian, &min); err != nil {
-		return nil, fmt.Errorf("error leyendo min: %v", err)
+	if err := binary.Read(reader, binary.LittleEndian, &minimo); err != nil {
+		return nil, fmt.Errorf("error leyendo minimo: %v", err)
 	}
-	if err := binary.Read(reader, binary.LittleEndian, &max); err != nil {
-		return nil, fmt.Errorf("error leyendo max: %v", err)
+	if err := binary.Read(reader, binary.LittleEndian, &maximo); err != nil {
+		return nil, fmt.Errorf("error leyendo maximo: %v", err)
 	}
 	if err := binary.Read(reader, binary.LittleEndian, &bitsNecesarios); err != nil {
 		return nil, fmt.Errorf("error leyendo bits_per_value: %v", err)
 	}
 
-	// Si bits es 0, todos los valores son iguales al min
+	// Si bits es 0, todos los valores son iguales al minimo
 	if bitsNecesarios == 0 {
-		resultado := make([]T, count)
-		for i := uint32(0); i < count; i++ {
-			resultado[i] = fromInt64[T](min)
+		resultado := make([]T, cantidad)
+		for i := uint32(0); i < cantidad; i++ {
+			resultado[i] = desdeInt64[T](minimo)
 		}
 		return resultado, nil
 	}
@@ -157,18 +157,18 @@ func (c *CompresorBitsGenerico[T]) Descomprimir(datos []byte) ([]T, error) {
 	packedData := make([]byte, reader.Len())
 	reader.Read(packedData)
 
-	bitReader := newBitReader(packedData)
-	resultado := make([]T, 0, count)
+	lector := nuevoLectorBits(packedData)
+	resultado := make([]T, 0, cantidad)
 
-	// Leer exactamente count valores
-	for i := uint32(0); i < count; i++ {
-		normalized, err := bitReader.readBits(int(bitsNecesarios))
+	// Leer exactamente cantidad valores
+	for i := uint32(0); i < cantidad; i++ {
+		normalized, err := lector.leerBits(int(bitsNecesarios))
 		if err != nil {
 			return nil, fmt.Errorf("error leyendo valor %d: %v", i, err)
 		}
 
-		valor := int64(normalized) + min
-		resultado = append(resultado, fromInt64[T](valor))
+		valor := int64(normalized) + minimo
+		resultado = append(resultado, desdeInt64[T](valor))
 	}
 
 	return resultado, nil

@@ -1,4 +1,4 @@
-package edge
+package borde
 
 import (
 	"bytes"
@@ -22,7 +22,7 @@ var clienteS3 tipos.ClienteS3
 var configuracionS3 tipos.ConfiguracionS3
 
 // ConfigurarS3 configura la conexión a almacenamiento S3-compatible
-func (me *ManagerEdge) ConfigurarS3(cfg tipos.ConfiguracionS3) error {
+func (me *GestorBorde) ConfigurarS3(cfg tipos.ConfiguracionS3) error {
 	configuracionS3 = cfg
 
 	// Crear cliente S3 usando la función centralizada
@@ -53,7 +53,7 @@ func (me *ManagerEdge) ConfigurarS3(cfg tipos.ConfiguracionS3) error {
 }
 
 // MigrarAS3 migra todas las series y datos a almacenamiento S3 como archivos
-func (me *ManagerEdge) MigrarAS3() error {
+func (me *GestorBorde) MigrarAS3() error {
 	// Verificar que S3 esté configurado
 	if clienteS3 == nil {
 		// Intentar configurar desde variables de entorno
@@ -149,7 +149,7 @@ func (me *ManagerEdge) MigrarAS3() error {
 
 // MigrarPorTiempoAlmacenamiento migra bloques de datos que excedan el tiempo de almacenamiento configurado
 // para cada serie. Solo migra series que tengan TiempoAlmacenamiento > 0.
-func (me *ManagerEdge) MigrarPorTiempoAlmacenamiento() error {
+func (me *GestorBorde) MigrarPorTiempoAlmacenamiento() error {
 	// Verificar que S3 esté configurado
 	if clienteS3 == nil {
 		return fmt.Errorf("S3 no está configurado. Use ConfigurarS3() primero")
@@ -319,14 +319,14 @@ func parsearClaveLocalDatos(clave string) (serieId int, tiempoInicio, tiempoFin 
 
 // IniciarMigracionAutomatica inicia un goroutine que ejecuta la migración por tiempo
 // de almacenamiento periódicamente según el intervalo especificado.
-func (me *ManagerEdge) IniciarMigracionAutomatica(intervalo time.Duration) {
+func (me *GestorBorde) IniciarMigracionAutomatica(intervalo time.Duration) {
 	go func() {
 		ticker := time.NewTicker(intervalo)
 		defer ticker.Stop()
 
 		for {
 			select {
-			case <-me.done:
+			case <-me.finalizado:
 				log.Printf("Deteniendo migración automática")
 				return
 			case <-ticker.C:
@@ -351,10 +351,10 @@ func (me *ManagerEdge) IniciarMigracionAutomatica(intervalo time.Duration) {
 
 // EliminacionPendiente representa una serie pendiente de eliminar de S3
 type EliminacionPendiente struct {
-	SerieId   int    // ID de la serie eliminada
-	Path      string // Path original (para logging)
-	Timestamp int64  // Cuándo se solicitó la eliminación (UnixNano)
-	Intentos  int    // Cantidad de intentos fallidos
+	SerieId     int    // ID de la serie eliminada
+	Path        string // Path original (para logging)
+	MarcaTiempo int64  // Cuándo se solicitó la eliminación (UnixNano)
+	Intentos    int    // Cantidad de intentos fallidos
 }
 
 // generarClaveEliminacionPendiente genera la clave para almacenar una eliminación pendiente
@@ -363,12 +363,12 @@ func generarClaveEliminacionPendiente(serieId int) []byte {
 }
 
 // guardarEliminacionPendiente guarda una eliminación pendiente en PebbleDB
-func (me *ManagerEdge) guardarEliminacionPendiente(serieId int, path string) error {
+func (me *GestorBorde) guardarEliminacionPendiente(serieId int, path string) error {
 	pendiente := EliminacionPendiente{
-		SerieId:   serieId,
-		Path:      path,
-		Timestamp: time.Now().UnixNano(),
-		Intentos:  0,
+		SerieId:     serieId,
+		Path:        path,
+		MarcaTiempo: time.Now().UnixNano(),
+		Intentos:    0,
 	}
 
 	datos, err := tipos.SerializarGob(pendiente)
@@ -387,7 +387,7 @@ func (me *ManagerEdge) guardarEliminacionPendiente(serieId int, path string) err
 }
 
 // cargarEliminacionesPendientes carga todas las eliminaciones pendientes de PebbleDB
-func (me *ManagerEdge) cargarEliminacionesPendientes() ([]EliminacionPendiente, error) {
+func (me *GestorBorde) cargarEliminacionesPendientes() ([]EliminacionPendiente, error) {
 	var pendientes []EliminacionPendiente
 
 	iter, err := me.db.NewIter(&pebble.IterOptions{
@@ -416,7 +416,7 @@ func (me *ManagerEdge) cargarEliminacionesPendientes() ([]EliminacionPendiente, 
 }
 
 // actualizarEliminacionPendiente actualiza el contador de intentos de una eliminación pendiente
-func (me *ManagerEdge) actualizarEliminacionPendiente(pendiente EliminacionPendiente) error {
+func (me *GestorBorde) actualizarEliminacionPendiente(pendiente EliminacionPendiente) error {
 	datos, err := tipos.SerializarGob(pendiente)
 	if err != nil {
 		return fmt.Errorf("error serializando eliminación pendiente: %v", err)
@@ -427,14 +427,14 @@ func (me *ManagerEdge) actualizarEliminacionPendiente(pendiente EliminacionPendi
 }
 
 // eliminarPendienteCompletado elimina una eliminación pendiente de PebbleDB (cuando se completó)
-func (me *ManagerEdge) eliminarPendienteCompletado(serieId int) error {
+func (me *GestorBorde) eliminarPendienteCompletado(serieId int) error {
 	clave := generarClaveEliminacionPendiente(serieId)
 	return me.db.Delete(clave, pebble.Sync)
 }
 
 // eliminarSerieDeS3 elimina todos los objetos de una serie en S3
 // Retorna el número de objetos eliminados y un error si falla
-func (me *ManagerEdge) eliminarSerieDeS3(serieId int) (int, error) {
+func (me *GestorBorde) eliminarSerieDeS3(serieId int) (int, error) {
 	if clienteS3 == nil {
 		return 0, fmt.Errorf("S3 no está configurado")
 	}
@@ -491,11 +491,11 @@ func (me *ManagerEdge) eliminarSerieDeS3(serieId int) (int, error) {
 
 // ProcesarEliminacionesPendientes procesa todas las eliminaciones pendientes de S3
 // Intenta eliminar los datos de cada serie en S3 y actualiza el registro del nodo
-func (me *ManagerEdge) ProcesarEliminacionesPendientes() error {
-	// Verificar si el manager está cerrando
+func (me *GestorBorde) ProcesarEliminacionesPendientes() error {
+	// Verificar si el gestor está cerrando
 	select {
-	case <-me.done:
-		return nil // Manager cerrando, no procesar
+	case <-me.finalizado:
+		return nil // Gestor cerrando, no procesar
 	default:
 	}
 
@@ -554,14 +554,14 @@ func (me *ManagerEdge) ProcesarEliminacionesPendientes() error {
 
 // IniciarLimpiezaS3Automatica inicia un goroutine que procesa eliminaciones pendientes
 // cada 5 minutos (mismo intervalo que limpieza de reglas)
-func (me *ManagerEdge) IniciarLimpiezaS3Automatica() {
+func (me *GestorBorde) IniciarLimpiezaS3Automatica() {
 	go func() {
 		ticker := time.NewTicker(5 * time.Minute)
 		defer ticker.Stop()
 
 		for {
 			select {
-			case <-me.done:
+			case <-me.finalizado:
 				log.Printf("Deteniendo limpieza automática de S3")
 				return
 			case <-ticker.C:

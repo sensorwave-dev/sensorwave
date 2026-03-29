@@ -4,7 +4,7 @@ import "errors"
 
 var (
 	errQoSInvalido        = errors.New("qos invalido")
-	errMessageIDRequerido = errors.New("messageId requerido")
+	errMensajeIDRequerido = errors.New("mensajeId requerido")
 )
 
 func validarQoS(m Mensaje) error {
@@ -12,8 +12,8 @@ func validarQoS(m Mensaje) error {
 	case 0:
 		return nil
 	case 1:
-		if m.MessageID == "" {
-			return errMessageIDRequerido
+		if m.MensajeID == "" {
+			return errMensajeIDRequerido
 		}
 		return nil
 	default:

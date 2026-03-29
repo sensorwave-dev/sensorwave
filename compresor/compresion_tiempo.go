@@ -19,7 +19,7 @@ func CompresionDeltaDeltaTiempo(mediciones []tipos.Medicion) []byte {
 
 	// Almacenar el primer tiempo sin compresión (8 bytes)
 	primerTiempo := tiempos[0]
-	resultado = append(resultado, Int64ToBytes(primerTiempo)...)
+	resultado = append(resultado, Int64ABytes(primerTiempo)...)
 
 	if len(tiempos) == 1 {
 		return resultado
@@ -29,7 +29,7 @@ func CompresionDeltaDeltaTiempo(mediciones []tipos.Medicion) []byte {
 	var deltaTiempoAnterior int64
 	if len(tiempos) > 1 {
 		deltaTiempoAnterior = tiempos[1] - tiempos[0]
-		resultado = append(resultado, Int64ToBytes(deltaTiempoAnterior)...)
+		resultado = append(resultado, Int64ABytes(deltaTiempoAnterior)...)
 	}
 
 	if len(tiempos) == 2 {
@@ -58,11 +58,11 @@ func CompresionDeltaDeltaTiempo(mediciones []tipos.Medicion) []byte {
 		} else if deltaDeltaTiempo >= -2147483648 && deltaDeltaTiempo <= 2147483647 {
 			// 4 bytes + flag
 			deltaBytes = append(deltaBytes, 0x02) // Flag para 4 bytes
-			deltaBytes = append(deltaBytes, int32ToBytes(int32(deltaDeltaTiempo))...)
+			deltaBytes = append(deltaBytes, int32ABytes(int32(deltaDeltaTiempo))...)
 		} else {
 			// 8 bytes + flag
 			deltaBytes = append(deltaBytes, 0x03) // Flag para 8 bytes
-			deltaBytes = append(deltaBytes, Int64ToBytes(deltaDeltaTiempo)...)
+			deltaBytes = append(deltaBytes, Int64ABytes(deltaDeltaTiempo)...)
 		}
 
 		resultado = append(resultado, deltaBytes...)
@@ -88,7 +88,7 @@ func DescompresionDeltaDeltaTiempo(datos []byte) ([]int64, error) {
 	offset := 0
 
 	// Leer primer tiempo (8 bytes)
-	primerTiempo := BytesToInt64(datos[offset : offset+8])
+	primerTiempo := BytesAInt64(datos[offset : offset+8])
 	resultado = append(resultado, primerTiempo)
 	offset += 8
 
@@ -101,7 +101,7 @@ func DescompresionDeltaDeltaTiempo(datos []byte) ([]int64, error) {
 		return nil, fmt.Errorf("datos insuficientes para primera delta")
 	}
 
-	deltaTiempoAnterior := BytesToInt64(datos[offset : offset+8])
+	deltaTiempoAnterior := BytesAInt64(datos[offset : offset+8])
 	segundoTiempo := primerTiempo + deltaTiempoAnterior
 	resultado = append(resultado, segundoTiempo)
 	offset += 8
@@ -143,14 +143,14 @@ func DescompresionDeltaDeltaTiempo(datos []byte) ([]int64, error) {
 			if offset+4 > len(datos) {
 				return nil, fmt.Errorf("datos insuficientes para delta-delta de 4 bytes")
 			}
-			deltaDeltaTiempo = int64(bytesToInt32(datos[offset : offset+4]))
+			deltaDeltaTiempo = int64(bytesAInt32(datos[offset : offset+4]))
 			offset += 4
 
 		case 0x03: // 8 bytes
 			if offset+8 > len(datos) {
 				return nil, fmt.Errorf("datos insuficientes para delta-delta de 8 bytes")
 			}
-			deltaDeltaTiempo = BytesToInt64(datos[offset : offset+8])
+			deltaDeltaTiempo = BytesAInt64(datos[offset : offset+8])
 			offset += 8
 
 		default:

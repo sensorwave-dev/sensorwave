@@ -31,7 +31,7 @@ import (
 
 // Numeric es una restricción de tipo para valores numéricos
 // IMPORTANTE: El sistema normaliza todos los enteros a int64 y todos los flotantes a float64
-// antes de la compresión. Ver edge/utils.go:inferirTipo() y compresor/compresion_utils.go:ConvertirA*Array()
+// antes de la compresión. Ver borde/utils.go:inferirTipo() y compresor/compresion_utils.go:ConvertirA*Array()
 type Numeric interface {
 	int64 | float64
 }
@@ -60,7 +60,7 @@ func (c *CompresorDeltaDeltaGenerico[T]) Comprimir(valores []T) ([]byte, error) 
 	// Calcular y almacenar primera delta
 	var deltaPrevio int64
 	if len(valores) > 1 {
-		deltaPrevio = toInt64(valores[1]) - toInt64(valores[0])
+		deltaPrevio = aInt64(valores[1]) - aInt64(valores[0])
 		if err := binary.Write(&buffer, binary.LittleEndian, deltaPrevio); err != nil {
 			return nil, err
 		}
@@ -72,8 +72,8 @@ func (c *CompresorDeltaDeltaGenerico[T]) Comprimir(valores []T) ([]byte, error) 
 
 	// Aplicar compresión delta-delta para el resto
 	for i := 2; i < len(valores); i++ {
-		valorActual := toInt64(valores[i])
-		valorAnterior := toInt64(valores[i-1])
+		valorActual := aInt64(valores[i])
+		valorAnterior := aInt64(valores[i-1])
 
 		// Calcular delta
 		delta := valorActual - valorAnterior
@@ -131,7 +131,7 @@ func (c *CompresorDeltaDeltaGenerico[T]) Descomprimir(datos []byte) ([]T, error)
 		return nil, fmt.Errorf("error leyendo primera delta: %v", err)
 	}
 
-	segundoValor := fromInt64[T](toInt64(primerValor) + deltaPrevio)
+	segundoValor := desdeInt64[T](aInt64(primerValor) + deltaPrevio)
 	resultado = append(resultado, segundoValor)
 
 	if buffer.Len() == 0 {
@@ -139,7 +139,7 @@ func (c *CompresorDeltaDeltaGenerico[T]) Descomprimir(datos []byte) ([]T, error)
 	}
 
 	// Descomprimir el resto
-	valorAnterior := toInt64(segundoValor)
+	valorAnterior := aInt64(segundoValor)
 
 	for buffer.Len() > 0 {
 		// Leer flag
@@ -184,7 +184,7 @@ func (c *CompresorDeltaDeltaGenerico[T]) Descomprimir(datos []byte) ([]T, error)
 		delta := deltaPrevio + deltaDelta
 		valorActual := valorAnterior + delta
 
-		resultado = append(resultado, fromInt64[T](valorActual))
+		resultado = append(resultado, desdeInt64[T](valorActual))
 
 		deltaPrevio = delta
 		valorAnterior = valorActual
@@ -193,10 +193,10 @@ func (c *CompresorDeltaDeltaGenerico[T]) Descomprimir(datos []byte) ([]T, error)
 	return resultado, nil
 }
 
-// toInt64 convierte valores numéricos a int64 para cálculos de delta
+// aInt64 convierte valores numéricos a int64 para cálculos de delta
 // Para int64: conversión directa
 // Para float64: usa representación binaria IEEE 754 (math.Float64bits)
-func toInt64[T Numeric](v T) int64 {
+func aInt64[T Numeric](v T) int64 {
 	switch val := any(v).(type) {
 	case int64:
 		return val
@@ -207,9 +207,9 @@ func toInt64[T Numeric](v T) int64 {
 	}
 }
 
-// fromInt64 convierte int64 de vuelta al tipo T
-// Reversa de toInt64: reconstruye el tipo original
-func fromInt64[T Numeric](v int64) T {
+// desdeInt64 convierte int64 de vuelta al tipo T
+// Reversa de aInt64: reconstruye el tipo original
+func desdeInt64[T Numeric](v int64) T {
 	var zero T
 	switch any(zero).(type) {
 	case int64:

@@ -1,4 +1,4 @@
-package edge
+package borde
 
 import (
 	"bytes"
@@ -113,7 +113,7 @@ func TestGenerarNodoID(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		id := generarNodoID()
 		assert.NotEmpty(t, id)
-		assert.Contains(t, id, "edge-")
+		assert.Contains(t, id, "borde-")
 		assert.False(t, ids[id], "ID duplicado generado")
 		ids[id] = true
 	}
@@ -173,18 +173,18 @@ func TestMatchTags(t *testing.T) {
 	}
 
 	// Sin filtro - siempre coincide
-	assert.True(t, matchTags(serieTags, nil))
-	assert.True(t, matchTags(serieTags, map[string]string{}))
+	assert.True(t, coincidirTags(serieTags, nil))
+	assert.True(t, coincidirTags(serieTags, map[string]string{}))
 
 	// Filtro parcial que coincide
-	assert.True(t, matchTags(serieTags, map[string]string{"ubicacion": "sala1"}))
-	assert.True(t, matchTags(serieTags, map[string]string{"ubicacion": "sala1", "tipo": "temperatura"}))
+	assert.True(t, coincidirTags(serieTags, map[string]string{"ubicacion": "sala1"}))
+	assert.True(t, coincidirTags(serieTags, map[string]string{"ubicacion": "sala1", "tipo": "temperatura"}))
 
 	// Filtro que no coincide
-	assert.False(t, matchTags(serieTags, map[string]string{"ubicacion": "sala2"}))
-	assert.False(t, matchTags(serieTags, map[string]string{"inexistente": "valor"}))
+	assert.False(t, coincidirTags(serieTags, map[string]string{"ubicacion": "sala2"}))
+	assert.False(t, coincidirTags(serieTags, map[string]string{"inexistente": "valor"}))
 
-	t.Log("✓ matchTags verifica coincidencia de tags correctamente")
+	t.Log("✓ coincidirTags verifica coincidencia de tags correctamente")
 }
 
 // ============================================================================
@@ -195,17 +195,17 @@ func TestMatchTags(t *testing.T) {
 func TestCrear_SinS3SinPuerto_ModoLocal(t *testing.T) {
 	tempDir := t.TempDir()
 
-	manager, err := Crear(Opciones{
+	gestor, err := Crear(Opciones{
 		NombreDB:   tempDir + "/test_local.db",
 		PuertoHTTP: "",  // Sin puerto
 		ConfigS3:   nil, // Sin S3
 	})
 
 	require.NoError(t, err)
-	defer manager.Cerrar()
+	defer gestor.Cerrar()
 
-	assert.NotEmpty(t, manager.ObtenerNodoID())
-	assert.Empty(t, manager.puertoHTTP)
+	assert.NotEmpty(t, gestor.ObtenerNodoID())
+	assert.Empty(t, gestor.puertoHTTP)
 	t.Log("✓ Crear funciona en modo local sin servidor HTTP")
 }
 
@@ -246,59 +246,59 @@ func TestCrear_SinS3ConPuerto_Error(t *testing.T) {
 // TESTS DE SERIES.GO
 // ============================================================================
 
-// TestMatchPath_Exacto verifica coincidencia exacta
-func TestMatchPath_Exacto(t *testing.T) {
-	assert.True(t, tipos.MatchPath("sensor/temperatura", "sensor/temperatura"))
-	assert.False(t, tipos.MatchPath("sensor/temperatura", "sensor/humedad"))
+// TestCoincidePath_Exacto verifica coincidencia exacta
+func TestCoincidePath_Exacto(t *testing.T) {
+	assert.True(t, tipos.CoincidePath("sensor/temperatura", "sensor/temperatura"))
+	assert.False(t, tipos.CoincidePath("sensor/temperatura", "sensor/humedad"))
 	t.Log("✓ matchPath funciona con coincidencia exacta")
 }
 
-// TestMatchPath_Wildcard verifica wildcards
-func TestMatchPath_Wildcard(t *testing.T) {
+// TestCoincidePath_Wildcard verifica wildcards
+func TestCoincidePath_Wildcard(t *testing.T) {
 	// Wildcard total
-	assert.True(t, tipos.MatchPath("cualquier/cosa", "*"))
+	assert.True(t, tipos.CoincidePath("cualquier/cosa", "*"))
 
 	// Wildcard parcial
-	assert.True(t, tipos.MatchPath("dispositivo_001/temperatura", "dispositivo_001/*"))
-	assert.True(t, tipos.MatchPath("dispositivo_001/temperatura", "*/temperatura"))
+	assert.True(t, tipos.CoincidePath("dispositivo_001/temperatura", "dispositivo_001/*"))
+	assert.True(t, tipos.CoincidePath("dispositivo_001/temperatura", "*/temperatura"))
 
 	// No coincide (dispositivo diferente)
-	assert.False(t, tipos.MatchPath("dispositivo_001/temperatura", "dispositivo_002/*"))
+	assert.False(t, tipos.CoincidePath("dispositivo_001/temperatura", "dispositivo_002/*"))
 
 	// Wildcard al final ahora coincide con múltiples niveles
-	assert.True(t, tipos.MatchPath("dispositivo_001/temperatura/extra", "dispositivo_001/*"))
-	assert.True(t, tipos.MatchPath("nodo/dispositivo/sensor", "nodo/*"))
+	assert.True(t, tipos.CoincidePath("dispositivo_001/temperatura/extra", "dispositivo_001/*"))
+	assert.True(t, tipos.CoincidePath("nodo/dispositivo/sensor", "nodo/*"))
 
 	t.Log("✓ matchPath funciona con wildcards")
 }
 
-// TestMatchPath_LongitudDiferente verifica paths con diferente longitud
-func TestMatchPath_LongitudDiferente(t *testing.T) {
-	assert.False(t, tipos.MatchPath("a/b/c", "a/b"))
-	assert.False(t, tipos.MatchPath("a/b", "a/b/c"))
+// TestCoincidePath_LongitudDiferente verifica paths con diferente longitud
+func TestCoincidePath_LongitudDiferente(t *testing.T) {
+	assert.False(t, tipos.CoincidePath("a/b/c", "a/b"))
+	assert.False(t, tipos.CoincidePath("a/b", "a/b/c"))
 	t.Log("✓ matchPath maneja longitudes diferentes")
 }
 
-// TestMatchPath_WildcardParcial verifica wildcard parcial en segmento
-func TestMatchPath_WildcardParcial(t *testing.T) {
+// TestCoincidePath_WildcardParcial verifica wildcard parcial en segmento
+func TestCoincidePath_WildcardParcial(t *testing.T) {
 	// Wildcard parcial al inicio del segmento (wildcard al final = múltiples niveles)
-	assert.True(t, tipos.MatchPath("dispositivo1/temp", "dispositivo*/*"))
-	assert.True(t, tipos.MatchPath("dispositivo10/temp", "dispositivo*/*"))
-	assert.True(t, tipos.MatchPath("dispositivo123/humedad", "dispositivo*/*"))
+	assert.True(t, tipos.CoincidePath("dispositivo1/temp", "dispositivo*/*"))
+	assert.True(t, tipos.CoincidePath("dispositivo10/temp", "dispositivo*/*"))
+	assert.True(t, tipos.CoincidePath("dispositivo123/humedad", "dispositivo*/*"))
 
 	// Wildcard al final también coincide con múltiples niveles
-	assert.True(t, tipos.MatchPath("dispositivo1/temp/extra", "dispositivo*/*"))
-	assert.True(t, tipos.MatchPath("dispositivo123/humedad/nivel2/nivel3", "dispositivo*/*"))
+	assert.True(t, tipos.CoincidePath("dispositivo1/temp/extra", "dispositivo*/*"))
+	assert.True(t, tipos.CoincidePath("dispositivo123/humedad/nivel2/nivel3", "dispositivo*/*"))
 
 	// Wildcard parcial en múltiples segmentos
-	assert.True(t, tipos.MatchPath("dispositivo1/temperatura", "dispositivo*/temp*"))
-	assert.True(t, tipos.MatchPath("sensor_abc/valor_xyz", "sensor_*/valor_*"))
+	assert.True(t, tipos.CoincidePath("dispositivo1/temperatura", "dispositivo*/temp*"))
+	assert.True(t, tipos.CoincidePath("sensor_abc/valor_xyz", "sensor_*/valor_*"))
 
 	// No coincide con prefijo diferente
-	assert.False(t, tipos.MatchPath("sensor1/temp", "dispositivo*/*"))
-	assert.False(t, tipos.MatchPath("dev1/temp", "dispositivo*/*"))
+	assert.False(t, tipos.CoincidePath("sensor1/temp", "dispositivo*/*"))
+	assert.False(t, tipos.CoincidePath("dev1/temp", "dispositivo*/*"))
 
-	t.Log("✓ MatchPath funciona con wildcard parcial")
+	t.Log("✓ CoincidePath funciona con wildcard parcial")
 }
 
 // ============================================================================
@@ -344,7 +344,7 @@ func TestCalcularAgregacionSimple_Suma(t *testing.T) {
 // TestCalcularAgregacionSimple_Count verifica conteo
 func TestCalcularAgregacionSimple_Count(t *testing.T) {
 	valores := []float64{10, 20, 30, 40, 50}
-	resultado, err := CalcularAgregacionSimple(valores, AgregacionCount)
+	resultado, err := CalcularAgregacionSimple(valores, AgregacionConteo)
 	require.NoError(t, err)
 	assert.Equal(t, 5.0, resultado)
 	t.Log("✓ CalcularAgregacionSimple cuenta elementos correctamente")
@@ -397,7 +397,7 @@ func crearMotorReglasTest() *MotorReglas {
 		reglas:     make(map[string]*Regla),
 		ejecutores: make(map[string]EjecutorAccion),
 		habilitado: true,
-		manager:    nil,
+		gestor:     nil,
 		db:         nil,
 	}
 }
@@ -720,28 +720,28 @@ func TestEvaluarCondicionesRegla_SinCondiciones(t *testing.T) {
 
 // TestDeberiaSkipearBloque verifica lógica de skip de bloques
 func TestDeberiaSkipearBloque(t *testing.T) {
-	// Crear un manager mínimo para probar
-	manager := &ManagerEdge{}
+	// Crear un gestor mínimo para probar
+	gestor := &GestorBorde{}
 
 	// Bloque: 1000-2000, Consulta: 1500-2500 (se solapan)
-	assert.False(t, manager.deberiaSkipearBloque(
+	assert.False(t, gestor.deberiaOmitirBloque(
 		"data/0000000001/00000000000000001000_00000000000000002000",
 		1500, 2500))
 
 	// Bloque: 1000-2000, Consulta: 3000-4000 (no se solapan)
-	assert.True(t, manager.deberiaSkipearBloque(
+	assert.True(t, gestor.deberiaOmitirBloque(
 		"data/0000000001/00000000000000001000_00000000000000002000",
 		3000, 4000))
 
 	// Bloque: 3000-4000, Consulta: 1000-2000 (no se solapan)
-	assert.True(t, manager.deberiaSkipearBloque(
+	assert.True(t, gestor.deberiaOmitirBloque(
 		"data/0000000001/00000000000000003000_00000000000000004000",
 		1000, 2000))
 
 	// Formato inválido - no skip por seguridad
-	assert.False(t, manager.deberiaSkipearBloque("formato/invalido", 1000, 2000))
+	assert.False(t, gestor.deberiaOmitirBloque("formato/invalido", 1000, 2000))
 
-	t.Log("✓ deberiaSkipearBloque funciona correctamente")
+	t.Log("✓ deberiaOmitirBloque funciona correctamente")
 }
 
 // ============================================================================
@@ -852,45 +852,45 @@ func crearDBTemporal(t *testing.T) *pebble.DB {
 // HELPER: MANAGER EDGE PARA TESTS
 // ============================================================================
 
-// crearManagerEdgeParaTest crea un ManagerEdge mínimo para testing
+// crearGestorBordeParaTest crea un GestorBorde mínimo para testing
 // sin iniciar servidor HTTP ni conectarse a S3
-func crearManagerEdgeParaTest(t *testing.T) *ManagerEdge {
+func crearGestorBordeParaTest(t *testing.T) *GestorBorde {
 	dir := t.TempDir()
 	db, err := pebble.Open(dir, &pebble.Options{})
 	require.NoError(t, err)
 
-	manager := &ManagerEdge{
+	gestor := &GestorBorde{
 		nodoID:        "test-node-001",
 		direccion:     "127.0.0.1",
 		puertoHTTP:    "8080",
 		db:            db,
 		cache:         &Cache{datos: make(map[string]tipos.Serie)},
-		done:          make(chan struct{}),
+		finalizado:    make(chan struct{}),
 		contador:      0,
 		tamañoBuffer:  100,
 		timeoutBuffer: 100 * 1000 * 1000, // 100ms
 	}
 
 	// Inicializar motor de reglas
-	manager.MotorReglas = &MotorReglas{
+	gestor.MotorReglas = &MotorReglas{
 		reglas:     make(map[string]*Regla),
 		ejecutores: make(map[string]EjecutorAccion),
 		habilitado: true,
 		db:         db,
-		manager:    manager,
+		gestor:     gestor,
 	}
 
 	t.Cleanup(func() {
 		select {
-		case <-manager.done:
+		case <-gestor.finalizado:
 			// Ya cerrado
 		default:
-			close(manager.done)
+			close(gestor.finalizado)
 		}
 		db.Close()
 	})
 
-	return manager
+	return gestor
 }
 
 // ============================================================================
@@ -1041,7 +1041,7 @@ func crearBloqueComprimidoTest(t *testing.T, serie tipos.Serie, mediciones []tip
 
 // TestObtenerSeries_Existe verifica obtención de serie existente
 func TestObtenerSeries_Existe(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	// Agregar serie al cache
 	serie := tipos.Serie{
@@ -1053,12 +1053,12 @@ func TestObtenerSeries_Existe(t *testing.T) {
 		CompresionBytes:  tipos.SinCompresion,
 		Tags:             map[string]string{"ubicacion": "sala1"},
 	}
-	manager.cache.mu.Lock()
-	manager.cache.datos["sensor/temperatura"] = serie
-	manager.cache.mu.Unlock()
+	gestor.cache.mu.Lock()
+	gestor.cache.datos["sensor/temperatura"] = serie
+	gestor.cache.mu.Unlock()
 
 	// Obtener serie
-	resultado, err := manager.ObtenerSeries("sensor/temperatura")
+	resultado, err := gestor.ObtenerSeries("sensor/temperatura")
 	require.NoError(t, err)
 	assert.Equal(t, serie.Path, resultado.Path)
 	assert.Equal(t, serie.TipoDatos, resultado.TipoDatos)
@@ -1067,9 +1067,9 @@ func TestObtenerSeries_Existe(t *testing.T) {
 
 // TestObtenerSeries_NoExiste verifica error cuando serie no existe
 func TestObtenerSeries_NoExiste(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
-	_, err := manager.ObtenerSeries("serie/inexistente")
+	_, err := gestor.ObtenerSeries("serie/inexistente")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no encontrada")
 	t.Log("ObtenerSeries retorna error para serie inexistente")
@@ -1077,9 +1077,9 @@ func TestObtenerSeries_NoExiste(t *testing.T) {
 
 // TestListarSeries_Vacio verifica listado cuando no hay series
 func TestListarSeries_Vacio(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
-	series, err := manager.ListarSeries()
+	series, err := gestor.ListarSeries()
 	require.NoError(t, err)
 	assert.Empty(t, series)
 	t.Log("ListarSeries retorna lista vacía cuando no hay series")
@@ -1087,16 +1087,16 @@ func TestListarSeries_Vacio(t *testing.T) {
 
 // TestListarSeries_ConDatos verifica listado con múltiples series
 func TestListarSeries_ConDatos(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	// Agregar varias series al cache
-	manager.cache.mu.Lock()
-	manager.cache.datos["sensor/temperatura"] = tipos.Serie{Path: "sensor/temperatura"}
-	manager.cache.datos["sensor/humedad"] = tipos.Serie{Path: "sensor/humedad"}
-	manager.cache.datos["actuador/motor"] = tipos.Serie{Path: "actuador/motor"}
-	manager.cache.mu.Unlock()
+	gestor.cache.mu.Lock()
+	gestor.cache.datos["sensor/temperatura"] = tipos.Serie{Path: "sensor/temperatura"}
+	gestor.cache.datos["sensor/humedad"] = tipos.Serie{Path: "sensor/humedad"}
+	gestor.cache.datos["actuador/motor"] = tipos.Serie{Path: "actuador/motor"}
+	gestor.cache.mu.Unlock()
 
-	series, err := manager.ListarSeries()
+	series, err := gestor.ListarSeries()
 	require.NoError(t, err)
 	assert.Len(t, series, 3)
 	t.Log("ListarSeries retorna todas las series")
@@ -1104,22 +1104,22 @@ func TestListarSeries_ConDatos(t *testing.T) {
 
 // TestListarSeriesPorPath_ConWildcard verifica filtrado por patrón
 func TestListarSeriesPorPath_ConWildcard(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	// Agregar series al cache
-	manager.cache.mu.Lock()
-	manager.cache.datos["dispositivo_001/temperatura"] = tipos.Serie{Path: "dispositivo_001/temperatura"}
-	manager.cache.datos["dispositivo_001/humedad"] = tipos.Serie{Path: "dispositivo_001/humedad"}
-	manager.cache.datos["dispositivo_002/temperatura"] = tipos.Serie{Path: "dispositivo_002/temperatura"}
-	manager.cache.mu.Unlock()
+	gestor.cache.mu.Lock()
+	gestor.cache.datos["dispositivo_001/temperatura"] = tipos.Serie{Path: "dispositivo_001/temperatura"}
+	gestor.cache.datos["dispositivo_001/humedad"] = tipos.Serie{Path: "dispositivo_001/humedad"}
+	gestor.cache.datos["dispositivo_002/temperatura"] = tipos.Serie{Path: "dispositivo_002/temperatura"}
+	gestor.cache.mu.Unlock()
 
 	// Buscar con wildcard
-	series, err := manager.ListarSeriesPorPath("dispositivo_001/*")
+	series, err := gestor.ListarSeriesPorPath("dispositivo_001/*")
 	require.NoError(t, err)
 	assert.Len(t, series, 2)
 
 	// Buscar otro patrón
-	series, err = manager.ListarSeriesPorPath("*/temperatura")
+	series, err = gestor.ListarSeriesPorPath("*/temperatura")
 	require.NoError(t, err)
 	assert.Len(t, series, 2)
 
@@ -1128,57 +1128,40 @@ func TestListarSeriesPorPath_ConWildcard(t *testing.T) {
 
 // TestListarSeriesPorTags_Coincidencias verifica filtrado por tags
 func TestListarSeriesPorTags_Coincidencias(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	// Agregar series con diferentes tags
-	manager.cache.mu.Lock()
-	manager.cache.datos["sensor1"] = tipos.Serie{
+	gestor.cache.mu.Lock()
+	gestor.cache.datos["sensor1"] = tipos.Serie{
 		Path: "sensor1",
 		Tags: map[string]string{"ubicacion": "sala1", "tipo": "temperatura"},
 	}
-	manager.cache.datos["sensor2"] = tipos.Serie{
+	gestor.cache.datos["sensor2"] = tipos.Serie{
 		Path: "sensor2",
 		Tags: map[string]string{"ubicacion": "sala1", "tipo": "humedad"},
 	}
-	manager.cache.datos["sensor3"] = tipos.Serie{
+	gestor.cache.datos["sensor3"] = tipos.Serie{
 		Path: "sensor3",
 		Tags: map[string]string{"ubicacion": "sala2", "tipo": "temperatura"},
 	}
-	manager.cache.mu.Unlock()
+	gestor.cache.mu.Unlock()
 
 	// Filtrar por ubicacion
-	series, err := manager.ListarSeriesPorTags(map[string]string{"ubicacion": "sala1"})
+	series, err := gestor.ListarSeriesPorTags(map[string]string{"ubicacion": "sala1"})
 	require.NoError(t, err)
 	assert.Len(t, series, 2)
 
 	// Filtrar por múltiples tags
-	series, err = manager.ListarSeriesPorTags(map[string]string{"ubicacion": "sala1", "tipo": "temperatura"})
+	series, err = gestor.ListarSeriesPorTags(map[string]string{"ubicacion": "sala1", "tipo": "temperatura"})
 	require.NoError(t, err)
 	assert.Len(t, series, 1)
 
 	// Sin filtro retorna todas
-	series, err = manager.ListarSeriesPorTags(nil)
+	series, err = gestor.ListarSeriesPorTags(nil)
 	require.NoError(t, err)
 	assert.Len(t, series, 3)
 
 	t.Log("ListarSeriesPorTags filtra correctamente por tags")
-}
-
-// TestListarSeriesPorDispositivo verifica filtrado por dispositivo
-func TestListarSeriesPorDispositivo(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
-
-	// Agregar series
-	manager.cache.mu.Lock()
-	manager.cache.datos["dispositivo_001/temp"] = tipos.Serie{Path: "dispositivo_001/temp"}
-	manager.cache.datos["dispositivo_001/hum"] = tipos.Serie{Path: "dispositivo_001/hum"}
-	manager.cache.datos["dispositivo_002/temp"] = tipos.Serie{Path: "dispositivo_002/temp"}
-	manager.cache.mu.Unlock()
-
-	series, err := manager.ListarSeriesPorDispositivo("dispositivo_001")
-	require.NoError(t, err)
-	assert.Len(t, series, 2)
-	t.Log("ListarSeriesPorDispositivo filtra correctamente")
 }
 
 // ============================================================================
@@ -1187,9 +1170,9 @@ func TestListarSeriesPorDispositivo(t *testing.T) {
 
 // TestCrearSerie_PathVacio verifica rechazo de path vacío
 func TestCrearSerie_PathVacio(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
-	err := manager.CrearSerie(tipos.Serie{
+	err := gestor.CrearSerie(tipos.Serie{
 		Path:             "",
 		TipoDatos:        tipos.Real,
 		TamañoBloque:     100,
@@ -1203,7 +1186,7 @@ func TestCrearSerie_PathVacio(t *testing.T) {
 
 // TestCrearSerie_PathInvalido verifica rechazo de path con formato inválido
 func TestCrearSerie_PathInvalido(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	casosInvalidos := []string{
 		"/sensor/temp", // Empieza con /
@@ -1212,7 +1195,7 @@ func TestCrearSerie_PathInvalido(t *testing.T) {
 	}
 
 	for _, path := range casosInvalidos {
-		err := manager.CrearSerie(tipos.Serie{
+		err := gestor.CrearSerie(tipos.Serie{
 			Path:             path,
 			TipoDatos:        tipos.Real,
 			TamañoBloque:     100,
@@ -1226,9 +1209,9 @@ func TestCrearSerie_PathInvalido(t *testing.T) {
 
 // TestCrearSerie_TipoDatosInvalido verifica rechazo de tipo de datos inválido
 func TestCrearSerie_TipoDatosInvalido(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
-	err := manager.CrearSerie(tipos.Serie{
+	err := gestor.CrearSerie(tipos.Serie{
 		Path:             "sensor/temp",
 		TipoDatos:        tipos.Desconocido, // Tipo desconocido no es válido
 		TamañoBloque:     100,
@@ -1242,10 +1225,10 @@ func TestCrearSerie_TipoDatosInvalido(t *testing.T) {
 
 // TestCrearSerie_TamanoBloqueInvalido verifica rechazo de tamaño de bloque fuera de rango
 func TestCrearSerie_TamanoBloqueInvalido(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	// Tamaño 0
-	err := manager.CrearSerie(tipos.Serie{
+	err := gestor.CrearSerie(tipos.Serie{
 		Path:             "sensor/temp",
 		TipoDatos:        tipos.Real,
 		TamañoBloque:     0,
@@ -1255,7 +1238,7 @@ func TestCrearSerie_TamanoBloqueInvalido(t *testing.T) {
 	assert.Error(t, err)
 
 	// Tamaño negativo
-	err = manager.CrearSerie(tipos.Serie{
+	err = gestor.CrearSerie(tipos.Serie{
 		Path:             "sensor/temp2",
 		TipoDatos:        tipos.Real,
 		TamañoBloque:     -1,
@@ -1269,9 +1252,9 @@ func TestCrearSerie_TamanoBloqueInvalido(t *testing.T) {
 
 // TestCrearSerie_CompresionBloqueInvalida verifica rechazo de compresión de bloque inválida
 func TestCrearSerie_CompresionBloqueInvalida(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
-	err := manager.CrearSerie(tipos.Serie{
+	err := gestor.CrearSerie(tipos.Serie{
 		Path:             "sensor/temp",
 		TipoDatos:        tipos.Real,
 		TamañoBloque:     100,
@@ -1285,10 +1268,10 @@ func TestCrearSerie_CompresionBloqueInvalida(t *testing.T) {
 
 // TestCrearSerie_CompresionBytesInvalida verifica rechazo de compresión de bytes incompatible
 func TestCrearSerie_CompresionBytesInvalida(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	// XOR no es válido para Boolean
-	err := manager.CrearSerie(tipos.Serie{
+	err := gestor.CrearSerie(tipos.Serie{
 		Path:             "sensor/activo",
 		TipoDatos:        tipos.Boolean,
 		TamañoBloque:     100,
@@ -1301,9 +1284,9 @@ func TestCrearSerie_CompresionBytesInvalida(t *testing.T) {
 
 // TestCrearSerie_Exitoso verifica creación exitosa de serie
 func TestCrearSerie_Exitoso(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
-	err := manager.CrearSerie(tipos.Serie{
+	err := gestor.CrearSerie(tipos.Serie{
 		Path:             "sensor/temperatura",
 		TipoDatos:        tipos.Real,
 		TamañoBloque:     100,
@@ -1314,16 +1297,16 @@ func TestCrearSerie_Exitoso(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verificar que está en cache
-	manager.cache.mu.RLock()
-	serie, existe := manager.cache.datos["sensor/temperatura"]
-	manager.cache.mu.RUnlock()
+	gestor.cache.mu.RLock()
+	serie, existe := gestor.cache.datos["sensor/temperatura"]
+	gestor.cache.mu.RUnlock()
 
 	assert.True(t, existe)
 	assert.Equal(t, "sensor/temperatura", serie.Path)
 	assert.Equal(t, 1, serie.SerieId)
 
 	// Verificar que está en DB
-	_, closer, err := manager.db.Get([]byte("series/sensor/temperatura"))
+	_, closer, err := gestor.db.Get([]byte("series/sensor/temperatura"))
 	require.NoError(t, err)
 	closer.Close()
 
@@ -1332,7 +1315,7 @@ func TestCrearSerie_Exitoso(t *testing.T) {
 
 // TestCrearSerie_YaExiste_NoError verifica idempotencia
 func TestCrearSerie_YaExiste_NoError(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	serie := tipos.Serie{
 		Path:             "sensor/temp",
@@ -1343,17 +1326,17 @@ func TestCrearSerie_YaExiste_NoError(t *testing.T) {
 	}
 
 	// Primera creación
-	err := manager.CrearSerie(serie)
+	err := gestor.CrearSerie(serie)
 	require.NoError(t, err)
 
 	// Segunda creación - debe ser idempotente
-	err = manager.CrearSerie(serie)
+	err = gestor.CrearSerie(serie)
 	assert.NoError(t, err) // No debe dar error
 
 	// Verificar que solo hay una serie
-	manager.cache.mu.RLock()
-	count := len(manager.cache.datos)
-	manager.cache.mu.RUnlock()
+	gestor.cache.mu.RLock()
+	count := len(gestor.cache.datos)
+	gestor.cache.mu.RUnlock()
 	assert.Equal(t, 1, count)
 
 	t.Log("CrearSerie es idempotente para series existentes")
@@ -1365,9 +1348,9 @@ func TestCrearSerie_YaExiste_NoError(t *testing.T) {
 
 // TestInsertar_SerieNoExiste verifica error cuando serie no existe
 func TestInsertar_SerieNoExiste(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
-	err := manager.Insertar("serie/inexistente", time.Now().UnixNano(), 25.5)
+	err := gestor.Insertar("serie/inexistente", time.Now().UnixNano(), 25.5)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no encontrada")
 	t.Log("Insertar retorna error para serie inexistente")
@@ -1375,10 +1358,10 @@ func TestInsertar_SerieNoExiste(t *testing.T) {
 
 // TestInsertar_TipoIncompatible verifica error con tipo de dato incorrecto
 func TestInsertar_TipoIncompatible(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	// Crear serie de tipo Integer
-	err := manager.CrearSerie(tipos.Serie{
+	err := gestor.CrearSerie(tipos.Serie{
 		Path:             "sensor/contador",
 		TipoDatos:        tipos.Integer,
 		TamañoBloque:     100,
@@ -1388,7 +1371,7 @@ func TestInsertar_TipoIncompatible(t *testing.T) {
 	require.NoError(t, err)
 
 	// Intentar insertar string en serie Integer
-	err = manager.Insertar("sensor/contador", time.Now().UnixNano(), "texto")
+	err = gestor.Insertar("sensor/contador", time.Now().UnixNano(), "texto")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "incompatible")
 	t.Log("Insertar rechaza tipo de dato incompatible")
@@ -1396,10 +1379,10 @@ func TestInsertar_TipoIncompatible(t *testing.T) {
 
 // TestInsertar_Exitoso verifica inserción exitosa
 func TestInsertar_Exitoso(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	// Crear serie
-	err := manager.CrearSerie(tipos.Serie{
+	err := gestor.CrearSerie(tipos.Serie{
 		Path:             "sensor/temp",
 		TipoDatos:        tipos.Real,
 		TamañoBloque:     100,
@@ -1410,7 +1393,7 @@ func TestInsertar_Exitoso(t *testing.T) {
 
 	// Insertar dato
 	tiempo := time.Now().UnixNano()
-	err = manager.Insertar("sensor/temp", tiempo, 25.5)
+	err = gestor.Insertar("sensor/temp", tiempo, 25.5)
 	assert.NoError(t, err)
 
 	t.Log("Insertar agrega dato correctamente")
@@ -1418,9 +1401,9 @@ func TestInsertar_Exitoso(t *testing.T) {
 
 // TestObtenerNodoID verifica que retorna el ID del nodo
 func TestObtenerNodoID(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
-	nodoID := manager.ObtenerNodoID()
+	nodoID := gestor.ObtenerNodoID()
 	assert.Equal(t, "test-node-001", nodoID)
 	t.Log("ObtenerNodoID retorna el ID correctamente")
 }
@@ -1431,9 +1414,9 @@ func TestObtenerNodoID(t *testing.T) {
 
 // TestConsultarRango_SerieNoExiste verifica error cuando serie no existe
 func TestConsultarRango_SerieNoExiste(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
-	_, err := manager.ConsultarRango("serie/inexistente", time.Now().Add(-1*time.Hour), time.Now())
+	_, err := gestor.ConsultarRango("serie/inexistente", time.Now().Add(-1*time.Hour), time.Now())
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no encontrada")
 	t.Log("ConsultarRango retorna error para serie inexistente")
@@ -1441,7 +1424,7 @@ func TestConsultarRango_SerieNoExiste(t *testing.T) {
 
 // TestConsultarRango_SinDatos verifica consulta cuando no hay datos
 func TestConsultarRango_SinDatos(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	// Crear serie sin datos
 	serie := tipos.Serie{
@@ -1452,11 +1435,11 @@ func TestConsultarRango_SinDatos(t *testing.T) {
 		CompresionBloque: tipos.Ninguna,
 		CompresionBytes:  tipos.SinCompresion,
 	}
-	manager.cache.mu.Lock()
-	manager.cache.datos["sensor/temp"] = serie
-	manager.cache.mu.Unlock()
+	gestor.cache.mu.Lock()
+	gestor.cache.datos["sensor/temp"] = serie
+	gestor.cache.mu.Unlock()
 
-	resultado, err := manager.ConsultarRango("sensor/temp", time.Now().Add(-1*time.Hour), time.Now())
+	resultado, err := gestor.ConsultarRango("sensor/temp", time.Now().Add(-1*time.Hour), time.Now())
 	require.NoError(t, err)
 	assert.Empty(t, resultado.Tiempos)
 	assert.Empty(t, resultado.Series)
@@ -1466,7 +1449,7 @@ func TestConsultarRango_SinDatos(t *testing.T) {
 
 // TestConsultarRango_ConDatosEnDB verifica consulta con datos en DB
 func TestConsultarRango_ConDatosEnDB(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	// Crear serie
 	serie := tipos.Serie{
@@ -1477,9 +1460,9 @@ func TestConsultarRango_ConDatosEnDB(t *testing.T) {
 		CompresionBloque: tipos.Ninguna,
 		CompresionBytes:  tipos.SinCompresion,
 	}
-	manager.cache.mu.Lock()
-	manager.cache.datos["sensor/temp"] = serie
-	manager.cache.mu.Unlock()
+	gestor.cache.mu.Lock()
+	gestor.cache.datos["sensor/temp"] = serie
+	gestor.cache.mu.Unlock()
 
 	// Crear mediciones de prueba
 	ahora := time.Now().UnixNano()
@@ -1494,11 +1477,11 @@ func TestConsultarRango_ConDatosEnDB(t *testing.T) {
 
 	// Guardar en DB
 	clave := generarClaveDatos(serie.SerieId, ahora-3000, ahora-1000)
-	err := manager.db.Set(clave, bloque, pebble.Sync)
+	err := gestor.db.Set(clave, bloque, pebble.Sync)
 	require.NoError(t, err)
 
 	// Consultar
-	resultado, err := manager.ConsultarRango("sensor/temp",
+	resultado, err := gestor.ConsultarRango("sensor/temp",
 		time.Unix(0, ahora-5000),
 		time.Unix(0, ahora))
 	require.NoError(t, err)
@@ -1519,7 +1502,7 @@ func TestConsultarRango_ConDatosEnDB(t *testing.T) {
 
 // TestConsultarUltimoPunto_DesdeBuffer verifica lectura desde buffer en memoria
 func TestConsultarUltimoPunto_DesdeBuffer(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	// Crear serie con buffer
 	serie := tipos.Serie{
@@ -1530,26 +1513,26 @@ func TestConsultarUltimoPunto_DesdeBuffer(t *testing.T) {
 		CompresionBloque: tipos.Ninguna,
 		CompresionBytes:  tipos.SinCompresion,
 	}
-	manager.cache.mu.Lock()
-	manager.cache.datos["sensor/temp"] = serie
-	manager.cache.mu.Unlock()
+	gestor.cache.mu.Lock()
+	gestor.cache.datos["sensor/temp"] = serie
+	gestor.cache.mu.Unlock()
 
 	// Crear buffer con datos
 	ahora := time.Now().UnixNano()
-	buffer := &SerieBuffer{
+	buffer := &BufferSerie{
 		datos:      make([]tipos.Medicion, 100),
 		serie:      serie,
 		indice:     3,
-		done:       make(chan struct{}),
+		finalizado: make(chan struct{}),
 		datosCanal: make(chan tipos.Medicion, 100),
 	}
 	buffer.datos[0] = tipos.Medicion{Tiempo: ahora - 2000, Valor: float64(20.0)}
 	buffer.datos[1] = tipos.Medicion{Tiempo: ahora - 1000, Valor: float64(21.0)}
 	buffer.datos[2] = tipos.Medicion{Tiempo: ahora, Valor: float64(22.0)} // Más reciente
-	manager.buffers.Store("sensor/temp", buffer)
+	gestor.buffers.Store("sensor/temp", buffer)
 
 	// Consultar último punto (nil, nil = sin límites de tiempo)
-	resultado, err := manager.ConsultarUltimoPunto("sensor/temp", nil, nil)
+	resultado, err := gestor.ConsultarUltimoPunto("sensor/temp", nil, nil)
 	require.NoError(t, err)
 
 	// Verificar formato columnar
@@ -1562,7 +1545,7 @@ func TestConsultarUltimoPunto_DesdeBuffer(t *testing.T) {
 
 // TestConsultarUltimoPunto_DesdeDB verifica lectura desde DB cuando buffer vacío
 func TestConsultarUltimoPunto_DesdeDB(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	// Crear serie
 	serie := tipos.Serie{
@@ -1573,9 +1556,9 @@ func TestConsultarUltimoPunto_DesdeDB(t *testing.T) {
 		CompresionBloque: tipos.Ninguna,
 		CompresionBytes:  tipos.SinCompresion,
 	}
-	manager.cache.mu.Lock()
-	manager.cache.datos["sensor/temp"] = serie
-	manager.cache.mu.Unlock()
+	gestor.cache.mu.Lock()
+	gestor.cache.datos["sensor/temp"] = serie
+	gestor.cache.mu.Unlock()
 
 	// Crear mediciones
 	ahora := time.Now().UnixNano()
@@ -1588,11 +1571,11 @@ func TestConsultarUltimoPunto_DesdeDB(t *testing.T) {
 	// Guardar bloque
 	bloque := crearBloqueComprimidoTest(t, serie, mediciones)
 	clave := generarClaveDatos(serie.SerieId, ahora-2000, ahora)
-	err := manager.db.Set(clave, bloque, pebble.Sync)
+	err := gestor.db.Set(clave, bloque, pebble.Sync)
 	require.NoError(t, err)
 
 	// Consultar (sin buffer, nil, nil = sin límites de tiempo)
-	resultado, err := manager.ConsultarUltimoPunto("sensor/temp", nil, nil)
+	resultado, err := gestor.ConsultarUltimoPunto("sensor/temp", nil, nil)
 	require.NoError(t, err)
 
 	// Verificar formato columnar
@@ -1608,12 +1591,12 @@ func TestConsultarUltimoPunto_DesdeDB(t *testing.T) {
 
 // TestHandleConsultaRango_MetodoInvalido verifica rechazo de método GET
 func TestHandleConsultaRango_MetodoInvalido(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/consulta/rango", nil)
 	w := httptest.NewRecorder()
 
-	manager.handleConsultaRango(w, req)
+	gestor.handleConsultaRango(w, req)
 
 	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 	t.Log("handleConsultaRango rechaza método GET")
@@ -1621,12 +1604,12 @@ func TestHandleConsultaRango_MetodoInvalido(t *testing.T) {
 
 // TestHandleConsultaRango_BodyInvalido verifica error con body inválido
 func TestHandleConsultaRango_BodyInvalido(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/consulta/rango", bytes.NewReader([]byte("datos inválidos")))
 	w := httptest.NewRecorder()
 
-	manager.handleConsultaRango(w, req)
+	gestor.handleConsultaRango(w, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	t.Log("handleConsultaRango rechaza body inválido")
@@ -1634,7 +1617,7 @@ func TestHandleConsultaRango_BodyInvalido(t *testing.T) {
 
 // TestHandleConsultaRango_Exitoso verifica consulta exitosa
 func TestHandleConsultaRango_Exitoso(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	// Crear serie
 	serie := tipos.Serie{
@@ -1645,9 +1628,9 @@ func TestHandleConsultaRango_Exitoso(t *testing.T) {
 		CompresionBloque: tipos.Ninguna,
 		CompresionBytes:  tipos.SinCompresion,
 	}
-	manager.cache.mu.Lock()
-	manager.cache.datos["sensor/temp"] = serie
-	manager.cache.mu.Unlock()
+	gestor.cache.mu.Lock()
+	gestor.cache.datos["sensor/temp"] = serie
+	gestor.cache.mu.Unlock()
 
 	// Crear solicitud
 	ahora := time.Now().UnixNano()
@@ -1661,7 +1644,7 @@ func TestHandleConsultaRango_Exitoso(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/consulta/rango", bytes.NewReader(solicitudBytes))
 	w := httptest.NewRecorder()
 
-	manager.handleConsultaRango(w, req)
+	gestor.handleConsultaRango(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, "application/octet-stream", w.Header().Get("Content-Type"))
@@ -1670,7 +1653,7 @@ func TestHandleConsultaRango_Exitoso(t *testing.T) {
 
 // TestHandleConsultaUltimo_Exitoso verifica consulta de último punto
 func TestHandleConsultaUltimo_Exitoso(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	// Crear serie con buffer
 	serie := tipos.Serie{
@@ -1681,19 +1664,19 @@ func TestHandleConsultaUltimo_Exitoso(t *testing.T) {
 		CompresionBloque: tipos.Ninguna,
 		CompresionBytes:  tipos.SinCompresion,
 	}
-	manager.cache.mu.Lock()
-	manager.cache.datos["sensor/temp"] = serie
-	manager.cache.mu.Unlock()
+	gestor.cache.mu.Lock()
+	gestor.cache.datos["sensor/temp"] = serie
+	gestor.cache.mu.Unlock()
 
 	// Buffer con datos
 	ahora := time.Now().UnixNano()
-	buffer := &SerieBuffer{
+	buffer := &BufferSerie{
 		datos:  make([]tipos.Medicion, 100),
 		serie:  serie,
 		indice: 1,
 	}
 	buffer.datos[0] = tipos.Medicion{Tiempo: ahora, Valor: float64(25.0)}
-	manager.buffers.Store("sensor/temp", buffer)
+	gestor.buffers.Store("sensor/temp", buffer)
 
 	// Crear solicitud
 	solicitud := tipos.SolicitudConsultaPunto{Serie: "sensor/temp"}
@@ -1702,7 +1685,7 @@ func TestHandleConsultaUltimo_Exitoso(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/consulta/ultimo", bytes.NewReader(solicitudBytes))
 	w := httptest.NewRecorder()
 
-	manager.handleConsultaUltimo(w, req)
+	gestor.handleConsultaUltimo(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
@@ -1756,14 +1739,14 @@ func TestEnviarRespuestaError(t *testing.T) {
 
 // TestRegistrarEnS3_S3NoConfigurado verifica error cuando S3 no está configurado
 func TestRegistrarEnS3_S3NoConfigurado(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	// Asegurar que clienteS3 es nil
 	clienteOriginal := clienteS3
 	clienteS3 = nil
 	defer func() { clienteS3 = clienteOriginal }()
 
-	err := manager.RegistrarEnS3()
+	err := gestor.RegistrarEnS3()
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no está configurado")
 	t.Log("RegistrarEnS3 retorna error cuando S3 no está configurado")
@@ -1771,7 +1754,7 @@ func TestRegistrarEnS3_S3NoConfigurado(t *testing.T) {
 
 // TestRegistrarEnS3_Exitoso verifica registro exitoso
 func TestRegistrarEnS3_Exitoso(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	// Configurar mock
 	clienteOriginal := clienteS3
@@ -1788,11 +1771,11 @@ func TestRegistrarEnS3_Exitoso(t *testing.T) {
 	configuracionS3 = tipos.ConfiguracionS3{Bucket: "test-bucket"}
 
 	// Agregar series al cache
-	manager.cache.mu.Lock()
-	manager.cache.datos["sensor/temp"] = tipos.Serie{Path: "sensor/temp"}
-	manager.cache.mu.Unlock()
+	gestor.cache.mu.Lock()
+	gestor.cache.datos["sensor/temp"] = tipos.Serie{Path: "sensor/temp"}
+	gestor.cache.mu.Unlock()
 
-	err := manager.RegistrarEnS3()
+	err := gestor.RegistrarEnS3()
 	assert.NoError(t, err)
 	assert.Equal(t, 1, mockS3.putObjectCalls)
 	t.Log("RegistrarEnS3 registra nodo exitosamente")
@@ -1800,7 +1783,7 @@ func TestRegistrarEnS3_Exitoso(t *testing.T) {
 
 // TestRegistrarEnS3_ErrorPutObject verifica manejo de error en PutObject
 func TestRegistrarEnS3_ErrorPutObject(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	// Configurar mock con error
 	clienteOriginal := clienteS3
@@ -1816,34 +1799,34 @@ func TestRegistrarEnS3_ErrorPutObject(t *testing.T) {
 	clienteS3 = mockS3
 	configuracionS3 = tipos.ConfiguracionS3{Bucket: "test-bucket"}
 
-	err := manager.RegistrarEnS3()
+	err := gestor.RegistrarEnS3()
 	assert.Error(t, err)
 	t.Log("RegistrarEnS3 maneja error de PutObject")
 }
 
 // TestMigrarAS3_S3NoConfigurado verifica error sin configuración
 func TestMigrarAS3_S3NoConfigurado(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	// Asegurar que clienteS3 es nil y no hay variables de entorno
 	clienteOriginal := clienteS3
 	clienteS3 = nil
 	defer func() { clienteS3 = clienteOriginal }()
 
-	err := manager.MigrarAS3()
+	err := gestor.MigrarAS3()
 	assert.Error(t, err)
 	t.Log("MigrarAS3 retorna error cuando S3 no está configurado")
 }
 
 // TestMigrarPorTiempoAlmacenamiento_S3NoConfigurado verifica error sin S3
 func TestMigrarPorTiempoAlmacenamiento_S3NoConfigurado(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	clienteOriginal := clienteS3
 	clienteS3 = nil
 	defer func() { clienteS3 = clienteOriginal }()
 
-	err := manager.MigrarPorTiempoAlmacenamiento()
+	err := gestor.MigrarPorTiempoAlmacenamiento()
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no está configurado")
 	t.Log("MigrarPorTiempoAlmacenamiento retorna error sin S3")
@@ -1851,7 +1834,7 @@ func TestMigrarPorTiempoAlmacenamiento_S3NoConfigurado(t *testing.T) {
 
 // TestMigrarPorTiempoAlmacenamiento_SinSeriesConTiempo verifica cuando no hay series con tiempo
 func TestMigrarPorTiempoAlmacenamiento_SinSeriesConTiempo(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	// Configurar mock
 	clienteOriginal := clienteS3
@@ -1861,14 +1844,14 @@ func TestMigrarPorTiempoAlmacenamiento_SinSeriesConTiempo(t *testing.T) {
 	clienteS3 = mockS3
 
 	// Agregar serie SIN TiempoAlmacenamiento
-	manager.cache.mu.Lock()
-	manager.cache.datos["sensor/temp"] = tipos.Serie{
+	gestor.cache.mu.Lock()
+	gestor.cache.datos["sensor/temp"] = tipos.Serie{
 		Path:                 "sensor/temp",
 		TiempoAlmacenamiento: 0, // Sin tiempo configurado
 	}
-	manager.cache.mu.Unlock()
+	gestor.cache.mu.Unlock()
 
-	err := manager.MigrarPorTiempoAlmacenamiento()
+	err := gestor.MigrarPorTiempoAlmacenamiento()
 	assert.NoError(t, err)
 	assert.Equal(t, 0, mockS3.putObjectCalls) // No debe migrar nada
 	t.Log("MigrarPorTiempoAlmacenamiento no hace nada si no hay series con tiempo")
@@ -1876,7 +1859,7 @@ func TestMigrarPorTiempoAlmacenamiento_SinSeriesConTiempo(t *testing.T) {
 
 // TestMigrarPorTiempoAlmacenamiento_MigraBloquesAntiguos verifica migración de bloques antiguos
 func TestMigrarPorTiempoAlmacenamiento_MigraBloquesAntiguos(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	// Configurar mock
 	clienteOriginal := clienteS3
@@ -1902,9 +1885,9 @@ func TestMigrarPorTiempoAlmacenamiento_MigraBloquesAntiguos(t *testing.T) {
 		CompresionBytes:      tipos.SinCompresion,
 		TiempoAlmacenamiento: int64(time.Hour),
 	}
-	manager.cache.mu.Lock()
-	manager.cache.datos["sensor/temp"] = serie
-	manager.cache.mu.Unlock()
+	gestor.cache.mu.Lock()
+	gestor.cache.datos["sensor/temp"] = serie
+	gestor.cache.mu.Unlock()
 
 	// Crear bloque antiguo (hace 2 horas)
 	tiempoAntiguo := time.Now().Add(-2 * time.Hour).UnixNano()
@@ -1913,9 +1896,9 @@ func TestMigrarPorTiempoAlmacenamiento_MigraBloquesAntiguos(t *testing.T) {
 	}
 	bloque := crearBloqueComprimidoTest(t, serie, mediciones)
 	clave := generarClaveDatos(serie.SerieId, tiempoAntiguo, tiempoAntiguo)
-	manager.db.Set(clave, bloque, pebble.Sync)
+	gestor.db.Set(clave, bloque, pebble.Sync)
 
-	err := manager.MigrarPorTiempoAlmacenamiento()
+	err := gestor.MigrarPorTiempoAlmacenamiento()
 	assert.NoError(t, err)
 	assert.Equal(t, 1, mockS3.putObjectCalls)
 	t.Log("MigrarPorTiempoAlmacenamiento migra bloques antiguos correctamente")
@@ -1927,7 +1910,7 @@ func TestMigrarPorTiempoAlmacenamiento_MigraBloquesAntiguos(t *testing.T) {
 
 // TestConsultarAgregacion_SerieExacta_Promedio verifica agregación AVG sobre una serie
 func TestConsultarAgregacion_SerieExacta_Promedio(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	// Crear serie
 	serie := tipos.Serie{
@@ -1938,9 +1921,9 @@ func TestConsultarAgregacion_SerieExacta_Promedio(t *testing.T) {
 		CompresionBloque: tipos.Ninguna,
 		CompresionBytes:  tipos.SinCompresion,
 	}
-	manager.cache.mu.Lock()
-	manager.cache.datos["sensor/temp"] = serie
-	manager.cache.mu.Unlock()
+	gestor.cache.mu.Lock()
+	gestor.cache.datos["sensor/temp"] = serie
+	gestor.cache.mu.Unlock()
 
 	// Crear mediciones: 10, 20, 30 → promedio = 20
 	ahora := time.Now().UnixNano()
@@ -1953,11 +1936,11 @@ func TestConsultarAgregacion_SerieExacta_Promedio(t *testing.T) {
 	// Guardar bloque
 	bloque := crearBloqueComprimidoTest(t, serie, mediciones)
 	clave := generarClaveDatos(serie.SerieId, ahora-3000, ahora-1000)
-	err := manager.db.Set(clave, bloque, pebble.Sync)
+	err := gestor.db.Set(clave, bloque, pebble.Sync)
 	require.NoError(t, err)
 
 	// Consultar promedio
-	resultado, err := manager.ConsultarAgregacion(
+	resultado, err := gestor.ConsultarAgregacion(
 		"sensor/temp",
 		time.Unix(0, ahora-5000),
 		time.Unix(0, ahora),
@@ -1974,7 +1957,7 @@ func TestConsultarAgregacion_SerieExacta_Promedio(t *testing.T) {
 
 // TestConsultarAgregacion_SerieExacta_MinMax verifica MIN y MAX
 func TestConsultarAgregacion_SerieExacta_MinMax(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	serie := tipos.Serie{
 		SerieId:          1,
@@ -1984,9 +1967,9 @@ func TestConsultarAgregacion_SerieExacta_MinMax(t *testing.T) {
 		CompresionBloque: tipos.Ninguna,
 		CompresionBytes:  tipos.SinCompresion,
 	}
-	manager.cache.mu.Lock()
-	manager.cache.datos["sensor/temp"] = serie
-	manager.cache.mu.Unlock()
+	gestor.cache.mu.Lock()
+	gestor.cache.datos["sensor/temp"] = serie
+	gestor.cache.mu.Unlock()
 
 	ahora := time.Now().UnixNano()
 	mediciones := []tipos.Medicion{
@@ -1997,10 +1980,10 @@ func TestConsultarAgregacion_SerieExacta_MinMax(t *testing.T) {
 
 	bloque := crearBloqueComprimidoTest(t, serie, mediciones)
 	clave := generarClaveDatos(serie.SerieId, ahora-3000, ahora-1000)
-	manager.db.Set(clave, bloque, pebble.Sync)
+	gestor.db.Set(clave, bloque, pebble.Sync)
 
 	// MIN
-	minResult, err := manager.ConsultarAgregacion(
+	minResult, err := gestor.ConsultarAgregacion(
 		"sensor/temp",
 		time.Unix(0, ahora-5000),
 		time.Unix(0, ahora),
@@ -2011,7 +1994,7 @@ func TestConsultarAgregacion_SerieExacta_MinMax(t *testing.T) {
 	assert.Equal(t, 5.0, minResult.Valores[0][0]) // [agregacion][serie]
 
 	// MAX
-	maxResult, err := manager.ConsultarAgregacion(
+	maxResult, err := gestor.ConsultarAgregacion(
 		"sensor/temp",
 		time.Unix(0, ahora-5000),
 		time.Unix(0, ahora),
@@ -2026,7 +2009,7 @@ func TestConsultarAgregacion_SerieExacta_MinMax(t *testing.T) {
 
 // TestConsultarAgregacion_SerieExacta_SumaCount verifica SUM y COUNT
 func TestConsultarAgregacion_SerieExacta_SumaCount(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	serie := tipos.Serie{
 		SerieId:          1,
@@ -2036,9 +2019,9 @@ func TestConsultarAgregacion_SerieExacta_SumaCount(t *testing.T) {
 		CompresionBloque: tipos.Ninguna,
 		CompresionBytes:  tipos.SinCompresion,
 	}
-	manager.cache.mu.Lock()
-	manager.cache.datos["sensor/temp"] = serie
-	manager.cache.mu.Unlock()
+	gestor.cache.mu.Lock()
+	gestor.cache.datos["sensor/temp"] = serie
+	gestor.cache.mu.Unlock()
 
 	ahora := time.Now().UnixNano()
 	mediciones := []tipos.Medicion{
@@ -2049,10 +2032,10 @@ func TestConsultarAgregacion_SerieExacta_SumaCount(t *testing.T) {
 
 	bloque := crearBloqueComprimidoTest(t, serie, mediciones)
 	clave := generarClaveDatos(serie.SerieId, ahora-3000, ahora-1000)
-	manager.db.Set(clave, bloque, pebble.Sync)
+	gestor.db.Set(clave, bloque, pebble.Sync)
 
 	// SUM = 60
-	sumaResult, err := manager.ConsultarAgregacion(
+	sumaResult, err := gestor.ConsultarAgregacion(
 		"sensor/temp",
 		time.Unix(0, ahora-5000),
 		time.Unix(0, ahora),
@@ -2063,11 +2046,11 @@ func TestConsultarAgregacion_SerieExacta_SumaCount(t *testing.T) {
 	assert.Equal(t, 60.0, sumaResult.Valores[0][0]) // [agregacion][serie]
 
 	// COUNT = 3
-	countResult, err := manager.ConsultarAgregacion(
+	countResult, err := gestor.ConsultarAgregacion(
 		"sensor/temp",
 		time.Unix(0, ahora-5000),
 		time.Unix(0, ahora),
-		[]tipos.TipoAgregacion{tipos.AgregacionCount},
+		[]tipos.TipoAgregacion{tipos.AgregacionConteo},
 	)
 	require.NoError(t, err)
 	require.Len(t, countResult.Series, 1)
@@ -2078,9 +2061,9 @@ func TestConsultarAgregacion_SerieExacta_SumaCount(t *testing.T) {
 
 // TestConsultarAgregacion_SerieNoExiste verifica error para serie inexistente
 func TestConsultarAgregacion_SerieNoExiste(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
-	_, err := manager.ConsultarAgregacion(
+	_, err := gestor.ConsultarAgregacion(
 		"serie/inexistente",
 		time.Now().Add(-time.Hour),
 		time.Now(),
@@ -2093,7 +2076,7 @@ func TestConsultarAgregacion_SerieNoExiste(t *testing.T) {
 
 // TestConsultarAgregacion_SinDatos verifica error cuando no hay datos en rango
 func TestConsultarAgregacion_SinDatos(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	serie := tipos.Serie{
 		SerieId:          1,
@@ -2103,11 +2086,11 @@ func TestConsultarAgregacion_SinDatos(t *testing.T) {
 		CompresionBloque: tipos.Ninguna,
 		CompresionBytes:  tipos.SinCompresion,
 	}
-	manager.cache.mu.Lock()
-	manager.cache.datos["sensor/temp"] = serie
-	manager.cache.mu.Unlock()
+	gestor.cache.mu.Lock()
+	gestor.cache.datos["sensor/temp"] = serie
+	gestor.cache.mu.Unlock()
 
-	_, err := manager.ConsultarAgregacion(
+	_, err := gestor.ConsultarAgregacion(
 		"sensor/temp",
 		time.Now().Add(-time.Hour),
 		time.Now(),
@@ -2120,7 +2103,7 @@ func TestConsultarAgregacion_SinDatos(t *testing.T) {
 
 // TestConsultarAgregacion_Patron verifica agregación con wildcard
 func TestConsultarAgregacion_Patron(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	// Crear 2 series con patrón común (wildcard como segmento completo)
 	series := []tipos.Serie{
@@ -2128,11 +2111,11 @@ func TestConsultarAgregacion_Patron(t *testing.T) {
 		{SerieId: 2, Path: "sensor_02/temp", TipoDatos: tipos.Real, TamañoBloque: 100, CompresionBloque: tipos.Ninguna, CompresionBytes: tipos.SinCompresion},
 	}
 
-	manager.cache.mu.Lock()
+	gestor.cache.mu.Lock()
 	for _, s := range series {
-		manager.cache.datos[s.Path] = s
+		gestor.cache.datos[s.Path] = s
 	}
-	manager.cache.mu.Unlock()
+	gestor.cache.mu.Unlock()
 
 	ahora := time.Now().UnixNano()
 
@@ -2142,7 +2125,7 @@ func TestConsultarAgregacion_Patron(t *testing.T) {
 		{Tiempo: ahora - 1000, Valor: float64(20.0)},
 	}
 	bloque1 := crearBloqueComprimidoTest(t, series[0], mediciones1)
-	manager.db.Set(generarClaveDatos(1, ahora-2000, ahora-1000), bloque1, pebble.Sync)
+	gestor.db.Set(generarClaveDatos(1, ahora-2000, ahora-1000), bloque1, pebble.Sync)
 
 	// Serie 2: valores 30, 40 → promedio 35
 	mediciones2 := []tipos.Medicion{
@@ -2150,11 +2133,11 @@ func TestConsultarAgregacion_Patron(t *testing.T) {
 		{Tiempo: ahora - 1000, Valor: float64(40.0)},
 	}
 	bloque2 := crearBloqueComprimidoTest(t, series[1], mediciones2)
-	manager.db.Set(generarClaveDatos(2, ahora-2000, ahora-1000), bloque2, pebble.Sync)
+	gestor.db.Set(generarClaveDatos(2, ahora-2000, ahora-1000), bloque2, pebble.Sync)
 
 	// Consultar con patrón */temp (wildcard como segmento completo)
 	// Serie 1: promedio 15, Serie 2: promedio 35 (ahora columnar, cada serie tiene su valor)
-	resultado, err := manager.ConsultarAgregacion(
+	resultado, err := gestor.ConsultarAgregacion(
 		"*/temp",
 		time.Unix(0, ahora-5000),
 		time.Unix(0, ahora),
@@ -2172,9 +2155,9 @@ func TestConsultarAgregacion_Patron(t *testing.T) {
 
 // TestConsultarAgregacion_PatronSinMatch verifica error cuando patrón no tiene coincidencias
 func TestConsultarAgregacion_PatronSinMatch(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
-	_, err := manager.ConsultarAgregacion(
+	_, err := gestor.ConsultarAgregacion(
 		"inexistente_*/temp",
 		time.Now().Add(-time.Hour),
 		time.Now(),
@@ -2187,7 +2170,7 @@ func TestConsultarAgregacion_PatronSinMatch(t *testing.T) {
 
 // TestConsultarAgregacionTemporal_Buckets verifica downsampling con múltiples buckets
 func TestConsultarAgregacionTemporal_Buckets(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	serie := tipos.Serie{
 		SerieId:          1,
@@ -2197,9 +2180,9 @@ func TestConsultarAgregacionTemporal_Buckets(t *testing.T) {
 		CompresionBloque: tipos.Ninguna,
 		CompresionBytes:  tipos.SinCompresion,
 	}
-	manager.cache.mu.Lock()
-	manager.cache.datos["sensor/temp"] = serie
-	manager.cache.mu.Unlock()
+	gestor.cache.mu.Lock()
+	gestor.cache.datos["sensor/temp"] = serie
+	gestor.cache.mu.Unlock()
 
 	// Crear mediciones distribuidas en 2 horas
 	ahora := time.Now()
@@ -2217,10 +2200,10 @@ func TestConsultarAgregacionTemporal_Buckets(t *testing.T) {
 
 	bloque := crearBloqueComprimidoTest(t, serie, mediciones)
 	clave := generarClaveDatos(serie.SerieId, hace2Horas.UnixNano(), hace1Hora.UnixNano()+2000)
-	manager.db.Set(clave, bloque, pebble.Sync)
+	gestor.db.Set(clave, bloque, pebble.Sync)
 
 	// Consultar con buckets de 1 hora
-	resultado, err := manager.ConsultarAgregacionTemporal(
+	resultado, err := gestor.ConsultarAgregacionTemporal(
 		"sensor/temp",
 		hace2Horas,
 		ahora,
@@ -2243,7 +2226,7 @@ func TestConsultarAgregacionTemporal_Buckets(t *testing.T) {
 
 // TestConsultarAgregacionTemporal_IntervaloGrande verifica un solo bucket cuando intervalo > rango
 func TestConsultarAgregacionTemporal_IntervaloGrande(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	serie := tipos.Serie{
 		SerieId:          1,
@@ -2253,9 +2236,9 @@ func TestConsultarAgregacionTemporal_IntervaloGrande(t *testing.T) {
 		CompresionBloque: tipos.Ninguna,
 		CompresionBytes:  tipos.SinCompresion,
 	}
-	manager.cache.mu.Lock()
-	manager.cache.datos["sensor/temp"] = serie
-	manager.cache.mu.Unlock()
+	gestor.cache.mu.Lock()
+	gestor.cache.datos["sensor/temp"] = serie
+	gestor.cache.mu.Unlock()
 
 	ahora := time.Now().UnixNano()
 	mediciones := []tipos.Medicion{
@@ -2266,10 +2249,10 @@ func TestConsultarAgregacionTemporal_IntervaloGrande(t *testing.T) {
 
 	bloque := crearBloqueComprimidoTest(t, serie, mediciones)
 	clave := generarClaveDatos(serie.SerieId, ahora-3000, ahora-1000)
-	manager.db.Set(clave, bloque, pebble.Sync)
+	gestor.db.Set(clave, bloque, pebble.Sync)
 
 	// Intervalo de 1 día para rango de pocos segundos → 1 bucket
-	resultado, err := manager.ConsultarAgregacionTemporal(
+	resultado, err := gestor.ConsultarAgregacionTemporal(
 		"sensor/temp",
 		time.Unix(0, ahora-5000),
 		time.Unix(0, ahora),
@@ -2286,9 +2269,9 @@ func TestConsultarAgregacionTemporal_IntervaloGrande(t *testing.T) {
 
 // TestConsultarAgregacionTemporal_IntervaloInvalido verifica error con intervalo <= 0
 func TestConsultarAgregacionTemporal_IntervaloInvalido(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
-	_, err := manager.ConsultarAgregacionTemporal(
+	_, err := gestor.ConsultarAgregacionTemporal(
 		"sensor/temp",
 		time.Now().Add(-time.Hour),
 		time.Now(),
@@ -2302,7 +2285,7 @@ func TestConsultarAgregacionTemporal_IntervaloInvalido(t *testing.T) {
 
 // TestConsultarAgregacionTemporal_SinDatos verifica error cuando no hay datos
 func TestConsultarAgregacionTemporal_SinDatos(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	serie := tipos.Serie{
 		SerieId:          1,
@@ -2312,11 +2295,11 @@ func TestConsultarAgregacionTemporal_SinDatos(t *testing.T) {
 		CompresionBloque: tipos.Ninguna,
 		CompresionBytes:  tipos.SinCompresion,
 	}
-	manager.cache.mu.Lock()
-	manager.cache.datos["sensor/temp"] = serie
-	manager.cache.mu.Unlock()
+	gestor.cache.mu.Lock()
+	gestor.cache.datos["sensor/temp"] = serie
+	gestor.cache.mu.Unlock()
 
-	_, err := manager.ConsultarAgregacionTemporal(
+	_, err := gestor.ConsultarAgregacionTemporal(
 		"sensor/temp",
 		time.Now().Add(-time.Hour),
 		time.Now(),
@@ -2330,17 +2313,17 @@ func TestConsultarAgregacionTemporal_SinDatos(t *testing.T) {
 
 // TestResolverSeries_PathExacto verifica resolución de path exacto
 func TestResolverSeries_PathExacto(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	serie := tipos.Serie{
 		SerieId: 1,
 		Path:    "sensor/temp",
 	}
-	manager.cache.mu.Lock()
-	manager.cache.datos["sensor/temp"] = serie
-	manager.cache.mu.Unlock()
+	gestor.cache.mu.Lock()
+	gestor.cache.datos["sensor/temp"] = serie
+	gestor.cache.mu.Unlock()
 
-	series, err := manager.resolverSeries("sensor/temp")
+	series, err := gestor.resolverSeries("sensor/temp")
 	require.NoError(t, err)
 	assert.Len(t, series, 1)
 	assert.Equal(t, "sensor/temp", series[0].Path)
@@ -2349,15 +2332,15 @@ func TestResolverSeries_PathExacto(t *testing.T) {
 
 // TestResolverSeries_Patron verifica resolución de patrón wildcard
 func TestResolverSeries_Patron(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
-	manager.cache.mu.Lock()
-	manager.cache.datos["sensor_01/temp"] = tipos.Serie{SerieId: 1, Path: "sensor_01/temp"}
-	manager.cache.datos["sensor_02/temp"] = tipos.Serie{SerieId: 2, Path: "sensor_02/temp"}
-	manager.cache.datos["sensor_01/humedad"] = tipos.Serie{SerieId: 3, Path: "sensor_01/humedad"}
-	manager.cache.mu.Unlock()
+	gestor.cache.mu.Lock()
+	gestor.cache.datos["sensor_01/temp"] = tipos.Serie{SerieId: 1, Path: "sensor_01/temp"}
+	gestor.cache.datos["sensor_02/temp"] = tipos.Serie{SerieId: 2, Path: "sensor_02/temp"}
+	gestor.cache.datos["sensor_01/humedad"] = tipos.Serie{SerieId: 3, Path: "sensor_01/humedad"}
+	gestor.cache.mu.Unlock()
 
-	series, err := manager.resolverSeries("*/temp")
+	series, err := gestor.resolverSeries("*/temp")
 	require.NoError(t, err)
 	assert.Len(t, series, 2)
 	t.Log("resolverSeries resuelve patrón wildcard correctamente")
@@ -2369,7 +2352,7 @@ func TestResolverSeries_Patron(t *testing.T) {
 
 // TestConsultarAgregacion_MultiplesAgregaciones_MinMax verifica cálculo de min y max en una sola pasada
 func TestConsultarAgregacion_MultiplesAgregaciones_MinMax(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	serie := tipos.Serie{
 		SerieId:          1,
@@ -2379,9 +2362,9 @@ func TestConsultarAgregacion_MultiplesAgregaciones_MinMax(t *testing.T) {
 		CompresionBloque: tipos.Ninguna,
 		CompresionBytes:  tipos.SinCompresion,
 	}
-	manager.cache.mu.Lock()
-	manager.cache.datos[serie.Path] = serie
-	manager.cache.mu.Unlock()
+	gestor.cache.mu.Lock()
+	gestor.cache.datos[serie.Path] = serie
+	gestor.cache.mu.Unlock()
 
 	// Crear mediciones: 10, 20, 30, 40, 50
 	ahora := time.Now().UnixNano()
@@ -2396,11 +2379,11 @@ func TestConsultarAgregacion_MultiplesAgregaciones_MinMax(t *testing.T) {
 	// Guardar bloque
 	bloque := crearBloqueComprimidoTest(t, serie, mediciones)
 	clave := generarClaveDatos(serie.SerieId, ahora-5000, ahora-1000)
-	err := manager.db.Set(clave, bloque, pebble.Sync)
+	err := gestor.db.Set(clave, bloque, pebble.Sync)
 	require.NoError(t, err)
 
 	// Consultar min y max en una sola llamada
-	resultado, err := manager.ConsultarAgregacion(
+	resultado, err := gestor.ConsultarAgregacion(
 		serie.Path,
 		time.Unix(0, ahora-6000),
 		time.Unix(0, ahora),
@@ -2423,7 +2406,7 @@ func TestConsultarAgregacion_MultiplesAgregaciones_MinMax(t *testing.T) {
 
 // TestConsultarAgregacion_MultiplesAgregaciones_Todas verifica todas las agregaciones juntas
 func TestConsultarAgregacion_MultiplesAgregaciones_Todas(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	serie := tipos.Serie{
 		SerieId:          1,
@@ -2433,9 +2416,9 @@ func TestConsultarAgregacion_MultiplesAgregaciones_Todas(t *testing.T) {
 		CompresionBloque: tipos.Ninguna,
 		CompresionBytes:  tipos.SinCompresion,
 	}
-	manager.cache.mu.Lock()
-	manager.cache.datos[serie.Path] = serie
-	manager.cache.mu.Unlock()
+	gestor.cache.mu.Lock()
+	gestor.cache.datos[serie.Path] = serie
+	gestor.cache.mu.Unlock()
 
 	// Crear mediciones: 10, 20, 30, 40, 50 (suma=150, promedio=30, count=5)
 	ahora := time.Now().UnixNano()
@@ -2449,7 +2432,7 @@ func TestConsultarAgregacion_MultiplesAgregaciones_Todas(t *testing.T) {
 
 	bloque := crearBloqueComprimidoTest(t, serie, mediciones)
 	clave := generarClaveDatos(serie.SerieId, ahora-5000, ahora-1000)
-	err := manager.db.Set(clave, bloque, pebble.Sync)
+	err := gestor.db.Set(clave, bloque, pebble.Sync)
 	require.NoError(t, err)
 
 	agregaciones := []tipos.TipoAgregacion{
@@ -2457,10 +2440,10 @@ func TestConsultarAgregacion_MultiplesAgregaciones_Todas(t *testing.T) {
 		tipos.AgregacionMaximo,
 		tipos.AgregacionPromedio,
 		tipos.AgregacionSuma,
-		tipos.AgregacionCount,
+		tipos.AgregacionConteo,
 	}
 
-	resultado, err := manager.ConsultarAgregacion(
+	resultado, err := gestor.ConsultarAgregacion(
 		serie.Path,
 		time.Unix(0, ahora-6000),
 		time.Unix(0, ahora),
@@ -2480,16 +2463,16 @@ func TestConsultarAgregacion_MultiplesAgregaciones_Todas(t *testing.T) {
 
 // TestConsultarAgregacion_MultiplesAgregaciones_Wildcard verifica múltiples agregaciones con wildcard
 func TestConsultarAgregacion_MultiplesAgregaciones_Wildcard(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	// Crear dos series
 	serie1 := tipos.Serie{SerieId: 1, Path: "dispositivo1/temp", TipoDatos: tipos.Real, TamañoBloque: 100, CompresionBloque: tipos.Ninguna, CompresionBytes: tipos.SinCompresion}
 	serie2 := tipos.Serie{SerieId: 2, Path: "dispositivo2/temp", TipoDatos: tipos.Real, TamañoBloque: 100, CompresionBloque: tipos.Ninguna, CompresionBytes: tipos.SinCompresion}
 
-	manager.cache.mu.Lock()
-	manager.cache.datos[serie1.Path] = serie1
-	manager.cache.datos[serie2.Path] = serie2
-	manager.cache.mu.Unlock()
+	gestor.cache.mu.Lock()
+	gestor.cache.datos[serie1.Path] = serie1
+	gestor.cache.datos[serie2.Path] = serie2
+	gestor.cache.mu.Unlock()
 
 	ahora := time.Now().UnixNano()
 
@@ -2500,7 +2483,7 @@ func TestConsultarAgregacion_MultiplesAgregaciones_Wildcard(t *testing.T) {
 	}
 	bloque1 := crearBloqueComprimidoTest(t, serie1, mediciones1)
 	clave1 := generarClaveDatos(serie1.SerieId, ahora-2000, ahora-1000)
-	manager.db.Set(clave1, bloque1, pebble.Sync)
+	gestor.db.Set(clave1, bloque1, pebble.Sync)
 
 	// Serie 2: valores 100, 200 (min=100, max=200)
 	mediciones2 := []tipos.Medicion{
@@ -2509,9 +2492,9 @@ func TestConsultarAgregacion_MultiplesAgregaciones_Wildcard(t *testing.T) {
 	}
 	bloque2 := crearBloqueComprimidoTest(t, serie2, mediciones2)
 	clave2 := generarClaveDatos(serie2.SerieId, ahora-2000, ahora-1000)
-	manager.db.Set(clave2, bloque2, pebble.Sync)
+	gestor.db.Set(clave2, bloque2, pebble.Sync)
 
-	resultado, err := manager.ConsultarAgregacion(
+	resultado, err := gestor.ConsultarAgregacion(
 		"dispositivo*/temp",
 		time.Unix(0, ahora-3000),
 		time.Unix(0, ahora),
@@ -2535,9 +2518,9 @@ func TestConsultarAgregacion_MultiplesAgregaciones_Wildcard(t *testing.T) {
 
 // TestConsultarAgregacion_SinAgregaciones verifica error sin agregaciones
 func TestConsultarAgregacion_SinAgregaciones(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
-	_, err := manager.ConsultarAgregacion(
+	_, err := gestor.ConsultarAgregacion(
 		"sensor/temp",
 		time.Now().Add(-1*time.Hour),
 		time.Now(),
@@ -2550,9 +2533,9 @@ func TestConsultarAgregacion_SinAgregaciones(t *testing.T) {
 
 // TestConsultarAgregacion_SerieNoExisteConMultiples verifica error para serie inexistente
 func TestConsultarAgregacion_SerieNoExisteConMultiples(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
-	_, err := manager.ConsultarAgregacion(
+	_, err := gestor.ConsultarAgregacion(
 		"serie/inexistente",
 		time.Now().Add(-1*time.Hour),
 		time.Now(),
@@ -2563,14 +2546,14 @@ func TestConsultarAgregacion_SerieNoExisteConMultiples(t *testing.T) {
 }
 
 // ============================================================================
-// TESTS DE ELIMINARSERIE (edge.go)
+// TESTS DE ELIMINARSERIE (borde.go)
 // ============================================================================
 
 // TestEliminarSerie_SerieNoExiste verifica error cuando serie no existe
 func TestEliminarSerie_SerieNoExiste(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
-	err := manager.EliminarSerie("serie/inexistente")
+	err := gestor.EliminarSerie("serie/inexistente")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no encontrada")
 	t.Log("EliminarSerie retorna error para serie inexistente")
@@ -2578,10 +2561,10 @@ func TestEliminarSerie_SerieNoExiste(t *testing.T) {
 
 // TestEliminarSerie_EliminaCache verifica que elimina del cache
 func TestEliminarSerie_EliminaCache(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	// Crear serie
-	err := manager.CrearSerie(tipos.Serie{
+	err := gestor.CrearSerie(tipos.Serie{
 		Path:             "sensor/temp",
 		TipoDatos:        tipos.Real,
 		TamañoBloque:     100,
@@ -2591,19 +2574,19 @@ func TestEliminarSerie_EliminaCache(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verificar que está en cache
-	manager.cache.mu.RLock()
-	_, existe := manager.cache.datos["sensor/temp"]
-	manager.cache.mu.RUnlock()
+	gestor.cache.mu.RLock()
+	_, existe := gestor.cache.datos["sensor/temp"]
+	gestor.cache.mu.RUnlock()
 	assert.True(t, existe, "Serie debe existir en cache antes de eliminar")
 
 	// Eliminar serie
-	err = manager.EliminarSerie("sensor/temp")
+	err = gestor.EliminarSerie("sensor/temp")
 	require.NoError(t, err)
 
 	// Verificar que ya no está en cache
-	manager.cache.mu.RLock()
-	_, existe = manager.cache.datos["sensor/temp"]
-	manager.cache.mu.RUnlock()
+	gestor.cache.mu.RLock()
+	_, existe = gestor.cache.datos["sensor/temp"]
+	gestor.cache.mu.RUnlock()
 	assert.False(t, existe, "Serie no debe existir en cache después de eliminar")
 
 	t.Log("EliminarSerie elimina serie del cache correctamente")
@@ -2611,10 +2594,10 @@ func TestEliminarSerie_EliminaCache(t *testing.T) {
 
 // TestEliminarSerie_EliminaMetadatosDB verifica que elimina metadatos de PebbleDB
 func TestEliminarSerie_EliminaMetadatosDB(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	// Crear serie
-	err := manager.CrearSerie(tipos.Serie{
+	err := gestor.CrearSerie(tipos.Serie{
 		Path:             "sensor/temp",
 		TipoDatos:        tipos.Real,
 		TamañoBloque:     100,
@@ -2624,16 +2607,16 @@ func TestEliminarSerie_EliminaMetadatosDB(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verificar que está en DB
-	_, closer, err := manager.db.Get([]byte("series/sensor/temp"))
+	_, closer, err := gestor.db.Get([]byte("series/sensor/temp"))
 	require.NoError(t, err)
 	closer.Close()
 
 	// Eliminar serie
-	err = manager.EliminarSerie("sensor/temp")
+	err = gestor.EliminarSerie("sensor/temp")
 	require.NoError(t, err)
 
 	// Verificar que ya no está en DB
-	_, _, err = manager.db.Get([]byte("series/sensor/temp"))
+	_, _, err = gestor.db.Get([]byte("series/sensor/temp"))
 	assert.Equal(t, pebble.ErrNotFound, err, "Metadatos deben ser eliminados de DB")
 
 	t.Log("EliminarSerie elimina metadatos de PebbleDB correctamente")
@@ -2641,7 +2624,7 @@ func TestEliminarSerie_EliminaMetadatosDB(t *testing.T) {
 
 // TestEliminarSerie_EliminaDatosDB verifica que elimina bloques de datos de PebbleDB
 func TestEliminarSerie_EliminaDatosDB(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	// Crear serie
 	serie := tipos.Serie{
@@ -2651,13 +2634,13 @@ func TestEliminarSerie_EliminaDatosDB(t *testing.T) {
 		CompresionBloque: tipos.Ninguna,
 		CompresionBytes:  tipos.SinCompresion,
 	}
-	err := manager.CrearSerie(serie)
+	err := gestor.CrearSerie(serie)
 	require.NoError(t, err)
 
 	// Obtener SerieId asignado
-	manager.cache.mu.RLock()
-	serieGuardada := manager.cache.datos["sensor/temp"]
-	manager.cache.mu.RUnlock()
+	gestor.cache.mu.RLock()
+	serieGuardada := gestor.cache.datos["sensor/temp"]
+	gestor.cache.mu.RUnlock()
 	serieId := serieGuardada.SerieId
 
 	// Crear y guardar bloques de datos
@@ -2668,20 +2651,20 @@ func TestEliminarSerie_EliminaDatosDB(t *testing.T) {
 	}
 	bloque := crearBloqueComprimidoTest(t, serieGuardada, mediciones)
 	clave := generarClaveDatos(serieId, ahora-2000, ahora-1000)
-	err = manager.db.Set(clave, bloque, pebble.Sync)
+	err = gestor.db.Set(clave, bloque, pebble.Sync)
 	require.NoError(t, err)
 
 	// Verificar que el bloque existe
-	_, closer, err := manager.db.Get(clave)
+	_, closer, err := gestor.db.Get(clave)
 	require.NoError(t, err)
 	closer.Close()
 
 	// Eliminar serie
-	err = manager.EliminarSerie("sensor/temp")
+	err = gestor.EliminarSerie("sensor/temp")
 	require.NoError(t, err)
 
 	// Verificar que el bloque fue eliminado
-	_, _, err = manager.db.Get(clave)
+	_, _, err = gestor.db.Get(clave)
 	assert.Equal(t, pebble.ErrNotFound, err, "Bloques de datos deben ser eliminados")
 
 	t.Log("EliminarSerie elimina bloques de datos de PebbleDB correctamente")
@@ -2689,10 +2672,10 @@ func TestEliminarSerie_EliminaDatosDB(t *testing.T) {
 
 // TestEliminarSerie_EliminaBuffer verifica que elimina y cierra el buffer
 func TestEliminarSerie_EliminaBuffer(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	// Crear serie
-	err := manager.CrearSerie(tipos.Serie{
+	err := gestor.CrearSerie(tipos.Serie{
 		Path:             "sensor/temp",
 		TipoDatos:        tipos.Real,
 		TamañoBloque:     100,
@@ -2702,15 +2685,15 @@ func TestEliminarSerie_EliminaBuffer(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verificar que existe buffer
-	_, existe := manager.buffers.Load("sensor/temp")
+	_, existe := gestor.buffers.Load("sensor/temp")
 	assert.True(t, existe, "Buffer debe existir antes de eliminar")
 
 	// Eliminar serie
-	err = manager.EliminarSerie("sensor/temp")
+	err = gestor.EliminarSerie("sensor/temp")
 	require.NoError(t, err)
 
 	// Verificar que buffer fue eliminado
-	_, existe = manager.buffers.Load("sensor/temp")
+	_, existe = gestor.buffers.Load("sensor/temp")
 	assert.False(t, existe, "Buffer debe ser eliminado")
 
 	t.Log("EliminarSerie elimina y cierra buffer correctamente")
@@ -2718,10 +2701,10 @@ func TestEliminarSerie_EliminaBuffer(t *testing.T) {
 
 // TestEliminarSerie_NoAfectaOtrasSeries verifica que no elimina otras series
 func TestEliminarSerie_NoAfectaOtrasSeries(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	// Crear dos series
-	err := manager.CrearSerie(tipos.Serie{
+	err := gestor.CrearSerie(tipos.Serie{
 		Path:             "sensor/temp1",
 		TipoDatos:        tipos.Real,
 		TamañoBloque:     100,
@@ -2730,7 +2713,7 @@ func TestEliminarSerie_NoAfectaOtrasSeries(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	err = manager.CrearSerie(tipos.Serie{
+	err = gestor.CrearSerie(tipos.Serie{
 		Path:             "sensor/temp2",
 		TipoDatos:        tipos.Real,
 		TamañoBloque:     100,
@@ -2740,17 +2723,17 @@ func TestEliminarSerie_NoAfectaOtrasSeries(t *testing.T) {
 	require.NoError(t, err)
 
 	// Eliminar solo la primera
-	err = manager.EliminarSerie("sensor/temp1")
+	err = gestor.EliminarSerie("sensor/temp1")
 	require.NoError(t, err)
 
 	// Verificar que la segunda sigue existiendo
-	manager.cache.mu.RLock()
-	_, existe := manager.cache.datos["sensor/temp2"]
-	manager.cache.mu.RUnlock()
+	gestor.cache.mu.RLock()
+	_, existe := gestor.cache.datos["sensor/temp2"]
+	gestor.cache.mu.RUnlock()
 	assert.True(t, existe, "Segunda serie debe seguir existiendo")
 
 	// Verificar en DB
-	_, closer, err := manager.db.Get([]byte("series/sensor/temp2"))
+	_, closer, err := gestor.db.Get([]byte("series/sensor/temp2"))
 	require.NoError(t, err)
 	closer.Close()
 
@@ -2759,7 +2742,7 @@ func TestEliminarSerie_NoAfectaOtrasSeries(t *testing.T) {
 
 // TestEliminarSerie_EliminaMultiplesBloques verifica eliminación de múltiples bloques
 func TestEliminarSerie_EliminaMultiplesBloques(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	// Crear serie
 	serie := tipos.Serie{
@@ -2769,13 +2752,13 @@ func TestEliminarSerie_EliminaMultiplesBloques(t *testing.T) {
 		CompresionBloque: tipos.Ninguna,
 		CompresionBytes:  tipos.SinCompresion,
 	}
-	err := manager.CrearSerie(serie)
+	err := gestor.CrearSerie(serie)
 	require.NoError(t, err)
 
 	// Obtener SerieId
-	manager.cache.mu.RLock()
-	serieGuardada := manager.cache.datos["sensor/temp"]
-	manager.cache.mu.RUnlock()
+	gestor.cache.mu.RLock()
+	serieGuardada := gestor.cache.datos["sensor/temp"]
+	gestor.cache.mu.RUnlock()
 	serieId := serieGuardada.SerieId
 
 	// Crear múltiples bloques
@@ -2791,24 +2774,24 @@ func TestEliminarSerie_EliminaMultiplesBloques(t *testing.T) {
 		bloque := crearBloqueComprimidoTest(t, serieGuardada, mediciones)
 		clave := generarClaveDatos(serieId, tiempoBase, tiempoBase+1000)
 		claves = append(claves, clave)
-		err := manager.db.Set(clave, bloque, pebble.Sync)
+		err := gestor.db.Set(clave, bloque, pebble.Sync)
 		require.NoError(t, err)
 	}
 
 	// Verificar que todos los bloques existen
 	for _, clave := range claves {
-		_, closer, err := manager.db.Get(clave)
+		_, closer, err := gestor.db.Get(clave)
 		require.NoError(t, err)
 		closer.Close()
 	}
 
 	// Eliminar serie
-	err = manager.EliminarSerie("sensor/temp")
+	err = gestor.EliminarSerie("sensor/temp")
 	require.NoError(t, err)
 
 	// Verificar que todos los bloques fueron eliminados
 	for _, clave := range claves {
-		_, _, err := manager.db.Get(clave)
+		_, _, err := gestor.db.Get(clave)
 		assert.Equal(t, pebble.ErrNotFound, err, "Todos los bloques deben ser eliminados")
 	}
 
@@ -2817,7 +2800,7 @@ func TestEliminarSerie_EliminaMultiplesBloques(t *testing.T) {
 
 // TestEliminarSerie_ConS3 verifica que se registra eliminación pendiente para S3
 func TestEliminarSerie_ConS3(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	// Configurar mock de S3
 	clienteOriginal := clienteS3
@@ -2834,7 +2817,7 @@ func TestEliminarSerie_ConS3(t *testing.T) {
 	configuracionS3 = tipos.ConfiguracionS3{Bucket: "test-bucket"}
 
 	// Crear serie
-	err := manager.CrearSerie(tipos.Serie{
+	err := gestor.CrearSerie(tipos.Serie{
 		Path:             "sensor/temp",
 		TipoDatos:        tipos.Real,
 		TamañoBloque:     100,
@@ -2844,11 +2827,11 @@ func TestEliminarSerie_ConS3(t *testing.T) {
 	require.NoError(t, err)
 
 	// Eliminar serie
-	err = manager.EliminarSerie("sensor/temp")
+	err = gestor.EliminarSerie("sensor/temp")
 	require.NoError(t, err)
 
 	// Verificar que se registró eliminación pendiente (la actualización de S3 es diferida)
-	pendientes, err := manager.cargarEliminacionesPendientes()
+	pendientes, err := gestor.cargarEliminacionesPendientes()
 	require.NoError(t, err)
 	assert.Equal(t, 1, len(pendientes), "Debe registrar eliminación pendiente para S3")
 	if len(pendientes) > 0 {
@@ -2861,10 +2844,10 @@ func TestEliminarSerie_ConS3(t *testing.T) {
 
 // TestEliminarSerie_InsercionDespuesDeEliminar verifica que no se puede insertar después de eliminar
 func TestEliminarSerie_InsercionDespuesDeEliminar(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	// Crear serie
-	err := manager.CrearSerie(tipos.Serie{
+	err := gestor.CrearSerie(tipos.Serie{
 		Path:             "sensor/temp",
 		TipoDatos:        tipos.Real,
 		TamañoBloque:     100,
@@ -2874,11 +2857,11 @@ func TestEliminarSerie_InsercionDespuesDeEliminar(t *testing.T) {
 	require.NoError(t, err)
 
 	// Eliminar serie
-	err = manager.EliminarSerie("sensor/temp")
+	err = gestor.EliminarSerie("sensor/temp")
 	require.NoError(t, err)
 
 	// Intentar insertar
-	err = manager.Insertar("sensor/temp", time.Now().UnixNano(), 25.5)
+	err = gestor.Insertar("sensor/temp", time.Now().UnixNano(), 25.5)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no encontrada")
 
@@ -2887,10 +2870,10 @@ func TestEliminarSerie_InsercionDespuesDeEliminar(t *testing.T) {
 
 // TestEliminarSerie_ConsultaDespuesDeEliminar verifica que no se puede consultar después de eliminar
 func TestEliminarSerie_ConsultaDespuesDeEliminar(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	// Crear serie
-	err := manager.CrearSerie(tipos.Serie{
+	err := gestor.CrearSerie(tipos.Serie{
 		Path:             "sensor/temp",
 		TipoDatos:        tipos.Real,
 		TamañoBloque:     100,
@@ -2900,11 +2883,11 @@ func TestEliminarSerie_ConsultaDespuesDeEliminar(t *testing.T) {
 	require.NoError(t, err)
 
 	// Eliminar serie
-	err = manager.EliminarSerie("sensor/temp")
+	err = gestor.EliminarSerie("sensor/temp")
 	require.NoError(t, err)
 
 	// Intentar consultar
-	_, err = manager.ConsultarRango("sensor/temp", time.Now().Add(-time.Hour), time.Now())
+	_, err = gestor.ConsultarRango("sensor/temp", time.Now().Add(-time.Hour), time.Now())
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no encontrada")
 
@@ -2913,10 +2896,10 @@ func TestEliminarSerie_ConsultaDespuesDeEliminar(t *testing.T) {
 
 // TestEliminarSerie_PuedeRecrear verifica que se puede recrear una serie eliminada
 func TestEliminarSerie_PuedeRecrear(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	// Crear serie
-	err := manager.CrearSerie(tipos.Serie{
+	err := gestor.CrearSerie(tipos.Serie{
 		Path:             "sensor/temp",
 		TipoDatos:        tipos.Real,
 		TamañoBloque:     100,
@@ -2926,11 +2909,11 @@ func TestEliminarSerie_PuedeRecrear(t *testing.T) {
 	require.NoError(t, err)
 
 	// Eliminar serie
-	err = manager.EliminarSerie("sensor/temp")
+	err = gestor.EliminarSerie("sensor/temp")
 	require.NoError(t, err)
 
 	// Recrear serie (puede ser con configuración diferente)
-	err = manager.CrearSerie(tipos.Serie{
+	err = gestor.CrearSerie(tipos.Serie{
 		Path:             "sensor/temp",
 		TipoDatos:        tipos.Integer, // Tipo diferente
 		TamañoBloque:     200,           // Tamaño diferente
@@ -2940,9 +2923,9 @@ func TestEliminarSerie_PuedeRecrear(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verificar que la nueva configuración está aplicada
-	manager.cache.mu.RLock()
-	serie := manager.cache.datos["sensor/temp"]
-	manager.cache.mu.RUnlock()
+	gestor.cache.mu.RLock()
+	serie := gestor.cache.datos["sensor/temp"]
+	gestor.cache.mu.RUnlock()
 
 	assert.Equal(t, tipos.Integer, serie.TipoDatos)
 	assert.Equal(t, 200, serie.TamañoBloque)
@@ -2957,14 +2940,14 @@ func TestEliminarSerie_PuedeRecrear(t *testing.T) {
 
 // TestGuardarEliminacionPendiente verifica que se guarda correctamente
 func TestGuardarEliminacionPendiente(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
-	err := manager.guardarEliminacionPendiente(123, "sensor/temp")
+	err := gestor.guardarEliminacionPendiente(123, "sensor/temp")
 	require.NoError(t, err)
 
 	// Verificar que se guardó en DB
 	clave := generarClaveEliminacionPendiente(123)
-	_, closer, err := manager.db.Get(clave)
+	_, closer, err := gestor.db.Get(clave)
 	require.NoError(t, err)
 	closer.Close()
 
@@ -2973,18 +2956,18 @@ func TestGuardarEliminacionPendiente(t *testing.T) {
 
 // TestCargarEliminacionesPendientes verifica carga de pendientes
 func TestCargarEliminacionesPendientes(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	// Guardar varias pendientes
-	err := manager.guardarEliminacionPendiente(1, "sensor/temp1")
+	err := gestor.guardarEliminacionPendiente(1, "sensor/temp1")
 	require.NoError(t, err)
-	err = manager.guardarEliminacionPendiente(2, "sensor/temp2")
+	err = gestor.guardarEliminacionPendiente(2, "sensor/temp2")
 	require.NoError(t, err)
-	err = manager.guardarEliminacionPendiente(3, "sensor/temp3")
+	err = gestor.guardarEliminacionPendiente(3, "sensor/temp3")
 	require.NoError(t, err)
 
 	// Cargar pendientes
-	pendientes, err := manager.cargarEliminacionesPendientes()
+	pendientes, err := gestor.cargarEliminacionesPendientes()
 	require.NoError(t, err)
 	assert.Len(t, pendientes, 3)
 
@@ -2993,19 +2976,19 @@ func TestCargarEliminacionesPendientes(t *testing.T) {
 
 // TestEliminarPendienteCompletado verifica eliminación de pendiente
 func TestEliminarPendienteCompletado(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	// Guardar pendiente
-	err := manager.guardarEliminacionPendiente(123, "sensor/temp")
+	err := gestor.guardarEliminacionPendiente(123, "sensor/temp")
 	require.NoError(t, err)
 
 	// Eliminar pendiente
-	err = manager.eliminarPendienteCompletado(123)
+	err = gestor.eliminarPendienteCompletado(123)
 	require.NoError(t, err)
 
 	// Verificar que ya no existe
 	clave := generarClaveEliminacionPendiente(123)
-	_, _, err = manager.db.Get(clave)
+	_, _, err = gestor.db.Get(clave)
 	assert.Equal(t, pebble.ErrNotFound, err)
 
 	t.Log("eliminarPendienteCompletado elimina pendiente correctamente")
@@ -3013,22 +2996,22 @@ func TestEliminarPendienteCompletado(t *testing.T) {
 
 // TestActualizarEliminacionPendiente verifica actualización de intentos
 func TestActualizarEliminacionPendiente(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	// Guardar pendiente
-	err := manager.guardarEliminacionPendiente(123, "sensor/temp")
+	err := gestor.guardarEliminacionPendiente(123, "sensor/temp")
 	require.NoError(t, err)
 
 	// Cargar, modificar y actualizar
-	pendientes, _ := manager.cargarEliminacionesPendientes()
+	pendientes, _ := gestor.cargarEliminacionesPendientes()
 	pendiente := pendientes[0]
 	pendiente.Intentos = 5
 
-	err = manager.actualizarEliminacionPendiente(pendiente)
+	err = gestor.actualizarEliminacionPendiente(pendiente)
 	require.NoError(t, err)
 
 	// Verificar actualización
-	pendientesActualizados, _ := manager.cargarEliminacionesPendientes()
+	pendientesActualizados, _ := gestor.cargarEliminacionesPendientes()
 	assert.Equal(t, 5, pendientesActualizados[0].Intentos)
 
 	t.Log("actualizarEliminacionPendiente actualiza intentos correctamente")
@@ -3036,7 +3019,7 @@ func TestActualizarEliminacionPendiente(t *testing.T) {
 
 // TestEliminarSerie_GuardaPendienteConS3 verifica que se guarda pendiente cuando hay S3
 func TestEliminarSerie_GuardaPendienteConS3(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	// Configurar mock de S3
 	clienteOriginal := clienteS3
@@ -3054,7 +3037,7 @@ func TestEliminarSerie_GuardaPendienteConS3(t *testing.T) {
 	configuracionS3 = tipos.ConfiguracionS3{Bucket: "test-bucket"}
 
 	// Crear serie
-	err := manager.CrearSerie(tipos.Serie{
+	err := gestor.CrearSerie(tipos.Serie{
 		Path:             "sensor/temp",
 		TipoDatos:        tipos.Real,
 		TamañoBloque:     100,
@@ -3064,12 +3047,12 @@ func TestEliminarSerie_GuardaPendienteConS3(t *testing.T) {
 	require.NoError(t, err)
 
 	// Obtener SerieId
-	manager.cache.mu.RLock()
-	serieId := manager.cache.datos["sensor/temp"].SerieId
-	manager.cache.mu.RUnlock()
+	gestor.cache.mu.RLock()
+	serieId := gestor.cache.datos["sensor/temp"].SerieId
+	gestor.cache.mu.RUnlock()
 
 	// Eliminar serie
-	err = manager.EliminarSerie("sensor/temp")
+	err = gestor.EliminarSerie("sensor/temp")
 	require.NoError(t, err)
 
 	// Esperar un momento para que el goroutine procese (best-effort)
@@ -3079,9 +3062,9 @@ func TestEliminarSerie_GuardaPendienteConS3(t *testing.T) {
 	// Como el mock retorna lista vacía, la eliminación es exitosa y el pendiente se elimina
 	// Pero antes de procesar, el pendiente debió existir
 	// Verificamos que la serie fue eliminada localmente
-	manager.cache.mu.RLock()
-	_, existe := manager.cache.datos["sensor/temp"]
-	manager.cache.mu.RUnlock()
+	gestor.cache.mu.RLock()
+	_, existe := gestor.cache.datos["sensor/temp"]
+	gestor.cache.mu.RUnlock()
 	assert.False(t, existe)
 
 	t.Logf("EliminarSerie guarda pendiente cuando hay S3 configurado (serieId: %d)", serieId)
@@ -3089,7 +3072,7 @@ func TestEliminarSerie_GuardaPendienteConS3(t *testing.T) {
 
 // TestEliminarSerie_SinS3NoPendiente verifica que no guarda pendiente sin S3
 func TestEliminarSerie_SinS3NoPendiente(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	// Asegurar que no hay S3
 	clienteOriginal := clienteS3
@@ -3097,7 +3080,7 @@ func TestEliminarSerie_SinS3NoPendiente(t *testing.T) {
 	defer func() { clienteS3 = clienteOriginal }()
 
 	// Crear serie
-	err := manager.CrearSerie(tipos.Serie{
+	err := gestor.CrearSerie(tipos.Serie{
 		Path:             "sensor/temp",
 		TipoDatos:        tipos.Real,
 		TamañoBloque:     100,
@@ -3107,11 +3090,11 @@ func TestEliminarSerie_SinS3NoPendiente(t *testing.T) {
 	require.NoError(t, err)
 
 	// Eliminar serie
-	err = manager.EliminarSerie("sensor/temp")
+	err = gestor.EliminarSerie("sensor/temp")
 	require.NoError(t, err)
 
 	// Verificar que no hay pendientes
-	pendientes, err := manager.cargarEliminacionesPendientes()
+	pendientes, err := gestor.cargarEliminacionesPendientes()
 	require.NoError(t, err)
 	assert.Empty(t, pendientes)
 
@@ -3120,13 +3103,13 @@ func TestEliminarSerie_SinS3NoPendiente(t *testing.T) {
 
 // TestEliminarSerieDeS3_SinS3 verifica error cuando no hay S3
 func TestEliminarSerieDeS3_SinS3(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	clienteOriginal := clienteS3
 	clienteS3 = nil
 	defer func() { clienteS3 = clienteOriginal }()
 
-	_, err := manager.eliminarSerieDeS3(123)
+	_, err := gestor.eliminarSerieDeS3(123)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no está configurado")
 
@@ -3135,7 +3118,7 @@ func TestEliminarSerieDeS3_SinS3(t *testing.T) {
 
 // TestEliminarSerieDeS3_Exitoso verifica eliminación exitosa de S3
 func TestEliminarSerieDeS3_Exitoso(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	// Configurar mock con objetos a eliminar
 	clienteOriginal := clienteS3
@@ -3164,7 +3147,7 @@ func TestEliminarSerieDeS3_Exitoso(t *testing.T) {
 	configuracionS3 = tipos.ConfiguracionS3{Bucket: "test-bucket"}
 
 	// Eliminar serie de S3
-	eliminados, err := manager.eliminarSerieDeS3(1)
+	eliminados, err := gestor.eliminarSerieDeS3(1)
 	require.NoError(t, err)
 	assert.Equal(t, 3, eliminados)
 	assert.Equal(t, 3, mockS3.deleteObjectCalls)
@@ -3174,23 +3157,23 @@ func TestEliminarSerieDeS3_Exitoso(t *testing.T) {
 
 // TestProcesarEliminacionesPendientes_SinS3 verifica que no hace nada sin S3
 func TestProcesarEliminacionesPendientes_SinS3(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	clienteOriginal := clienteS3
 	clienteS3 = nil
 	defer func() { clienteS3 = clienteOriginal }()
 
 	// Guardar pendiente manualmente
-	pendiente := EliminacionPendiente{SerieId: 1, Path: "test", Timestamp: time.Now().UnixNano(), Intentos: 0}
+	pendiente := EliminacionPendiente{SerieId: 1, Path: "test", MarcaTiempo: time.Now().UnixNano(), Intentos: 0}
 	datos, _ := tipos.SerializarGob(pendiente)
-	manager.db.Set(generarClaveEliminacionPendiente(1), datos, pebble.Sync)
+	gestor.db.Set(generarClaveEliminacionPendiente(1), datos, pebble.Sync)
 
 	// Procesar (no debería hacer nada)
-	err := manager.ProcesarEliminacionesPendientes()
+	err := gestor.ProcesarEliminacionesPendientes()
 	assert.NoError(t, err)
 
 	// El pendiente debería seguir ahí
-	pendientes, _ := manager.cargarEliminacionesPendientes()
+	pendientes, _ := gestor.cargarEliminacionesPendientes()
 	assert.Len(t, pendientes, 1)
 
 	t.Log("ProcesarEliminacionesPendientes no hace nada sin S3")
@@ -3198,7 +3181,7 @@ func TestProcesarEliminacionesPendientes_SinS3(t *testing.T) {
 
 // TestProcesarEliminacionesPendientes_Exitoso verifica procesamiento exitoso
 func TestProcesarEliminacionesPendientes_Exitoso(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	// Configurar mock
 	clienteOriginal := clienteS3
@@ -3217,15 +3200,15 @@ func TestProcesarEliminacionesPendientes_Exitoso(t *testing.T) {
 	configuracionS3 = tipos.ConfiguracionS3{Bucket: "test-bucket"}
 
 	// Guardar pendiente
-	err := manager.guardarEliminacionPendiente(1, "sensor/temp")
+	err := gestor.guardarEliminacionPendiente(1, "sensor/temp")
 	require.NoError(t, err)
 
 	// Procesar
-	err = manager.ProcesarEliminacionesPendientes()
+	err = gestor.ProcesarEliminacionesPendientes()
 	require.NoError(t, err)
 
 	// Verificar que el pendiente fue eliminado
-	pendientes, _ := manager.cargarEliminacionesPendientes()
+	pendientes, _ := gestor.cargarEliminacionesPendientes()
 	assert.Empty(t, pendientes)
 
 	// Verificar que se actualizó el registro en S3
@@ -3236,7 +3219,7 @@ func TestProcesarEliminacionesPendientes_Exitoso(t *testing.T) {
 
 // TestProcesarEliminacionesPendientes_FallaConexion verifica reintento
 func TestProcesarEliminacionesPendientes_FallaConexion(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	// Configurar mock con error
 	clienteOriginal := clienteS3
@@ -3253,15 +3236,15 @@ func TestProcesarEliminacionesPendientes_FallaConexion(t *testing.T) {
 	configuracionS3 = tipos.ConfiguracionS3{Bucket: "test-bucket"}
 
 	// Guardar pendiente
-	err := manager.guardarEliminacionPendiente(1, "sensor/temp")
+	err := gestor.guardarEliminacionPendiente(1, "sensor/temp")
 	require.NoError(t, err)
 
 	// Procesar (fallará)
-	err = manager.ProcesarEliminacionesPendientes()
+	err = gestor.ProcesarEliminacionesPendientes()
 	require.NoError(t, err) // No retorna error, solo loggea
 
 	// Verificar que el pendiente sigue ahí con intentos incrementados
-	pendientes, _ := manager.cargarEliminacionesPendientes()
+	pendientes, _ := gestor.cargarEliminacionesPendientes()
 	require.Len(t, pendientes, 1)
 	assert.Equal(t, 1, pendientes[0].Intentos)
 
@@ -3270,7 +3253,7 @@ func TestProcesarEliminacionesPendientes_FallaConexion(t *testing.T) {
 
 // TestProcesarEliminacionesPendientes_MultiplesSeries verifica múltiples pendientes
 func TestProcesarEliminacionesPendientes_MultiplesSeries(t *testing.T) {
-	manager := crearManagerEdgeParaTest(t)
+	gestor := crearGestorBordeParaTest(t)
 
 	// Configurar mock
 	clienteOriginal := clienteS3
@@ -3290,20 +3273,20 @@ func TestProcesarEliminacionesPendientes_MultiplesSeries(t *testing.T) {
 
 	// Guardar varias pendientes
 	for i := 1; i <= 5; i++ {
-		err := manager.guardarEliminacionPendiente(i, fmt.Sprintf("sensor/temp%d", i))
+		err := gestor.guardarEliminacionPendiente(i, fmt.Sprintf("sensor/temp%d", i))
 		require.NoError(t, err)
 	}
 
 	// Verificar que hay 5 pendientes
-	pendientes, _ := manager.cargarEliminacionesPendientes()
+	pendientes, _ := gestor.cargarEliminacionesPendientes()
 	assert.Len(t, pendientes, 5)
 
 	// Procesar
-	err := manager.ProcesarEliminacionesPendientes()
+	err := gestor.ProcesarEliminacionesPendientes()
 	require.NoError(t, err)
 
 	// Verificar que todos fueron procesados
-	pendientes, _ = manager.cargarEliminacionesPendientes()
+	pendientes, _ = gestor.cargarEliminacionesPendientes()
 	assert.Empty(t, pendientes)
 
 	t.Log("ProcesarEliminacionesPendientes procesa múltiples pendientes")

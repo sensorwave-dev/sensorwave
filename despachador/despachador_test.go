@@ -21,11 +21,11 @@ import (
 )
 
 // ============================================================================
-// MOCK DE CLIENTE EDGE PARA TESTS
+// MOCK DE CLIENTE BORDE PARA TESTS
 // ============================================================================
 
-// mockClienteEdge implementa clienteEdge para testing
-type mockClienteEdge struct {
+// mockClienteBorde implementa clienteBorde para testing
+type mockClienteBorde struct {
 	respuestaRango              *tipos.RespuestaConsultaRango
 	respuestaPunto              *tipos.RespuestaConsultaPunto
 	respuestaAgregacion         *tipos.RespuestaConsultaAgregacion
@@ -33,28 +33,28 @@ type mockClienteEdge struct {
 	err                         error
 }
 
-func (m *mockClienteEdge) ConsultarRango(ctx context.Context, cliente string, direccion string, req tipos.SolicitudConsultaRango) (*tipos.RespuestaConsultaRango, error) {
+func (m *mockClienteBorde) ConsultarRango(ctx context.Context, cliente string, direccion string, req tipos.SolicitudConsultaRango) (*tipos.RespuestaConsultaRango, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
 	return m.respuestaRango, nil
 }
 
-func (m *mockClienteEdge) ConsultarUltimoPunto(ctx context.Context, cliente string, direccion string, req tipos.SolicitudConsultaPunto) (*tipos.RespuestaConsultaPunto, error) {
+func (m *mockClienteBorde) ConsultarUltimoPunto(ctx context.Context, cliente string, direccion string, req tipos.SolicitudConsultaPunto) (*tipos.RespuestaConsultaPunto, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
 	return m.respuestaPunto, nil
 }
 
-func (m *mockClienteEdge) ConsultarAgregacion(ctx context.Context, cliente string, direccion string, req tipos.SolicitudConsultaAgregacion) (*tipos.RespuestaConsultaAgregacion, error) {
+func (m *mockClienteBorde) ConsultarAgregacion(ctx context.Context, cliente string, direccion string, req tipos.SolicitudConsultaAgregacion) (*tipos.RespuestaConsultaAgregacion, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
 	return m.respuestaAgregacion, nil
 }
 
-func (m *mockClienteEdge) ConsultarAgregacionTemporal(ctx context.Context, cliente string, direccion string, req tipos.SolicitudConsultaAgregacionTemporal) (*tipos.RespuestaConsultaAgregacionTemporal, error) {
+func (m *mockClienteBorde) ConsultarAgregacionTemporal(ctx context.Context, cliente string, direccion string, req tipos.SolicitudConsultaAgregacionTemporal) (*tipos.RespuestaConsultaAgregacionTemporal, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
@@ -181,7 +181,7 @@ func (m *mockClienteS3) DeleteObject(ctx context.Context, params *s3.DeleteObjec
 
 // TestCombinarResultadosTabulares_Vacio verifica comportamiento con lista vacía
 func TestCombinarResultadosTabulares_Vacio(t *testing.T) {
-	m := &ManagerDespachador{}
+	m := &GestorDespachador{}
 
 	resultado := m.combinarResultadosTabulares([]tipos.ResultadoConsultaRango{})
 
@@ -193,7 +193,7 @@ func TestCombinarResultadosTabulares_Vacio(t *testing.T) {
 
 // TestCombinarResultadosTabulares_UnaFuente verifica con una sola fuente de datos
 func TestCombinarResultadosTabulares_UnaFuente(t *testing.T) {
-	m := &ManagerDespachador{}
+	m := &GestorDespachador{}
 
 	entrada := []tipos.ResultadoConsultaRango{
 		{
@@ -213,7 +213,7 @@ func TestCombinarResultadosTabulares_UnaFuente(t *testing.T) {
 
 // TestCombinarResultadosTabulares_MultiplesSeriesSinSolapamiento verifica combinación sin solapamiento
 func TestCombinarResultadosTabulares_MultiplesSeriesSinSolapamiento(t *testing.T) {
-	m := &ManagerDespachador{}
+	m := &GestorDespachador{}
 
 	entrada := []tipos.ResultadoConsultaRango{
 		{
@@ -241,7 +241,7 @@ func TestCombinarResultadosTabulares_MultiplesSeriesSinSolapamiento(t *testing.T
 
 // TestCombinarResultadosTabulares_ConSolapamientoTiempos verifica combinación con timestamps comunes
 func TestCombinarResultadosTabulares_ConSolapamientoTiempos(t *testing.T) {
-	m := &ManagerDespachador{}
+	m := &GestorDespachador{}
 
 	entrada := []tipos.ResultadoConsultaRango{
 		{
@@ -267,29 +267,29 @@ func TestCombinarResultadosTabulares_ConSolapamientoTiempos(t *testing.T) {
 	t.Log("combinarResultadosTabulares maneja timestamps solapados correctamente")
 }
 
-// TestCombinarResultadosTabular_S3YEdge verifica combinación de S3 con datos tabulares del edge
-func TestCombinarResultadosTabular_S3YEdge(t *testing.T) {
-	m := &ManagerDespachador{}
+// TestCombinarResultadosTabular_S3YBorde verifica combinación de S3 con datos tabulares del borde
+func TestCombinarResultadosTabular_S3YBorde(t *testing.T) {
+	m := &GestorDespachador{}
 
 	datosS3 := []tipos.Medicion{
 		{Tiempo: 1000, Valor: 10.0},
 		{Tiempo: 2000, Valor: 20.0},
 	}
 
-	datosEdge := tipos.ResultadoConsultaRango{
+	datosBorde := tipos.ResultadoConsultaRango{
 		Series:  []string{"/sensores/temp"},
 		Tiempos: []int64{2000, 3000},
 		Valores: [][]interface{}{{25.0}, {30.0}},
 	}
 
-	resultado := m.combinarResultadosTabular(datosS3, datosEdge, "/sensores/temp")
+	resultado := m.combinarResultadosTabular(datosS3, datosBorde, "/sensores/temp")
 
 	assert.Equal(t, []string{"/sensores/temp"}, resultado.Series)
 	assert.Equal(t, []int64{1000, 2000, 3000}, resultado.Tiempos)
-	// Verificar que el edge tiene prioridad en timestamp 2000
-	// Fila 1 (tiempo 2000) debe tener valor 25.0 del edge, no 20.0 de S3
+	// Verificar que el borde tiene prioridad en timestamp 2000
+	// Fila 1 (tiempo 2000) debe tener valor 25.0 del borde, no 20.0 de S3
 	assert.Equal(t, 25.0, resultado.Valores[1][0])
-	t.Log("combinarResultadosTabular prioriza datos del edge sobre S3")
+	t.Log("combinarResultadosTabular prioriza datos del borde sobre S3")
 }
 
 // ============================================================================
@@ -298,7 +298,7 @@ func TestCombinarResultadosTabular_S3YEdge(t *testing.T) {
 
 // TestListarNodos_Vacio verifica lista vacia
 func TestListarNodos_Vacio(t *testing.T) {
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		nodos: make(map[string]*tipos.Nodo),
 	}
 
@@ -310,7 +310,7 @@ func TestListarNodos_Vacio(t *testing.T) {
 
 // TestListarNodos_ConNodos verifica que retorna todos los nodos
 func TestListarNodos_ConNodos(t *testing.T) {
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {NodoID: "nodo1", Direccion: "192.168.1.1"},
 			"nodo2": {NodoID: "nodo2", Direccion: "192.168.1.2"},
@@ -337,7 +337,7 @@ func TestListarNodos_ConNodos(t *testing.T) {
 // TestListarNodos_EsCopia verifica que retorna una copia, no referencias
 func TestListarNodos_EsCopia(t *testing.T) {
 	nodoOriginal := &tipos.Nodo{NodoID: "nodo1", Direccion: "192.168.1.1"}
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": nodoOriginal,
 		},
@@ -358,20 +358,20 @@ func TestListarNodos_EsCopia(t *testing.T) {
 // TESTS DE CERRAR
 // ============================================================================
 
-// TestCerrar verifica que cierra el canal done
+// TestCerrar verifica que cierra el canal finalizado
 func TestCerrar(t *testing.T) {
-	m := &ManagerDespachador{
-		done: make(chan struct{}),
+	m := &GestorDespachador{
+		finalizado: make(chan struct{}),
 	}
 
 	// Iniciar goroutine que espera el cierre
 	cerrado := make(chan bool, 1)
 	go func() {
-		<-m.done
+		<-m.finalizado
 		cerrado <- true
 	}()
 
-	// Cerrar el manager
+	// Cerrar el gestor
 	err := m.Cerrar()
 
 	assert.NoError(t, err)
@@ -381,10 +381,10 @@ func TestCerrar(t *testing.T) {
 	case <-cerrado:
 		// OK
 	case <-time.After(100 * time.Millisecond):
-		t.Fatal("El canal done no fue cerrado")
+		t.Fatal("El canal finalizado no fue cerrado")
 	}
 
-	t.Log("Cerrar cierra el canal done correctamente")
+	t.Log("Cerrar cierra el canal finalizado correctamente")
 }
 
 // ============================================================================
@@ -398,7 +398,7 @@ func TestBuscarSeriesPorPath_Exacto(t *testing.T) {
 		Path:      "/sensores/temperatura",
 		TipoDatos: tipos.Real,
 	}
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
 				NodoID:    "nodo1",
@@ -423,7 +423,7 @@ func TestBuscarSeriesPorPath_Exacto(t *testing.T) {
 
 // TestBuscarSeriesPorPath_NoEncontrada verifica error cuando no existe la serie
 func TestBuscarSeriesPorPath_NoEncontrada(t *testing.T) {
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
 				NodoID: "nodo1",
@@ -444,7 +444,7 @@ func TestBuscarSeriesPorPath_NoEncontrada(t *testing.T) {
 
 // TestBuscarSeriesPorPath_SinNodos verifica error cuando no hay nodos
 func TestBuscarSeriesPorPath_SinNodos(t *testing.T) {
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		nodos: make(map[string]*tipos.Nodo),
 	}
 
@@ -458,7 +458,7 @@ func TestBuscarSeriesPorPath_SinNodos(t *testing.T) {
 
 // TestBuscarSeriesPorPath_Wildcard verifica busqueda con patron wildcard
 func TestBuscarSeriesPorPath_Wildcard(t *testing.T) {
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
 				NodoID: "nodo1",
@@ -483,7 +483,7 @@ func TestBuscarSeriesPorPath_Wildcard(t *testing.T) {
 
 // TestBuscarSeriesPorPath_WildcardMultiples verifica busqueda con wildcard que retorna multiples
 func TestBuscarSeriesPorPath_WildcardMultiples(t *testing.T) {
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
 				NodoID: "nodo1",
@@ -511,7 +511,7 @@ func TestBuscarSeriesPorPath_WildcardMultiples(t *testing.T) {
 
 // TestBuscarSeriesPorPath_WildcardSinCoincidencias verifica error cuando wildcard no tiene matches
 func TestBuscarSeriesPorPath_WildcardSinCoincidencias(t *testing.T) {
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
 				NodoID: "nodo1",
@@ -532,7 +532,7 @@ func TestBuscarSeriesPorPath_WildcardSinCoincidencias(t *testing.T) {
 
 // TestBuscarSeriesPorPath_MultiplesNodos verifica busqueda en multiples nodos
 func TestBuscarSeriesPorPath_MultiplesNodos(t *testing.T) {
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
 				NodoID: "nodo1",
@@ -561,17 +561,17 @@ func TestBuscarSeriesPorPath_MultiplesNodos(t *testing.T) {
 }
 
 // ============================================================================
-// TESTS DE CONSULTAR PUNTO EDGE
+// TESTS DE CONSULTAR PUNTO BORDE
 // ============================================================================
 
-// TestConsultarUltimoPuntoEdge_Exitoso verifica consulta exitosa al edge
-func TestConsultarUltimoPuntoEdge_Exitoso(t *testing.T) {
-	mockEdge := &mockClienteEdge{
+// TestConsultarUltimoPuntoBorde_Exitoso verifica consulta exitosa al borde
+func TestConsultarUltimoPuntoBorde_Exitoso(t *testing.T) {
+	mockBorde := &mockClienteBorde{
 		respuestaPunto: crearRespuestaPuntoColumnar("/sensores/temp", 1000, 25.5),
 	}
 
-	m := &ManagerDespachador{
-		clienteEdge: mockEdge,
+	m := &GestorDespachador{
+		clienteBorde: mockBorde,
 	}
 
 	nodo := tipos.Nodo{
@@ -580,24 +580,24 @@ func TestConsultarUltimoPuntoEdge_Exitoso(t *testing.T) {
 		PuertoHTTP: "8080",
 	}
 
-	resultado, err := m.consultarPuntoEdge(nodo, "/sensores/temp", nil, nil, 5*time.Second)
+	resultado, err := m.consultarPuntoBorde(nodo, "/sensores/temp", nil, nil, 5*time.Second)
 
 	assert.NoError(t, err)
 	require.Len(t, resultado.Series, 1)
 	assert.Equal(t, "/sensores/temp", resultado.Series[0])
 	assert.Equal(t, int64(1000), resultado.Tiempos[0])
 	assert.Equal(t, 25.5, resultado.Valores[0])
-	t.Log("consultarPuntoEdge retorna resultado columnar correctamente")
+	t.Log("consultarPuntoBorde retorna resultado columnar correctamente")
 }
 
-// TestConsultarUltimoPuntoEdge_SinDatos verifica cuando no hay datos
-func TestConsultarUltimoPuntoEdge_SinDatos(t *testing.T) {
-	mockEdge := &mockClienteEdge{
+// TestConsultarUltimoPuntoBorde_SinDatos verifica cuando no hay datos
+func TestConsultarUltimoPuntoBorde_SinDatos(t *testing.T) {
+	mockBorde := &mockClienteBorde{
 		respuestaPunto: crearRespuestaPuntoVacia(),
 	}
 
-	m := &ManagerDespachador{
-		clienteEdge: mockEdge,
+	m := &GestorDespachador{
+		clienteBorde: mockBorde,
 	}
 
 	nodo := tipos.Nodo{
@@ -606,21 +606,21 @@ func TestConsultarUltimoPuntoEdge_SinDatos(t *testing.T) {
 		PuertoHTTP: "8080",
 	}
 
-	resultado, err := m.consultarPuntoEdge(nodo, "/sensores/temp", nil, nil, 5*time.Second)
+	resultado, err := m.consultarPuntoBorde(nodo, "/sensores/temp", nil, nil, 5*time.Second)
 
 	assert.NoError(t, err)
 	assert.Empty(t, resultado.Series)
-	t.Log("consultarPuntoEdge retorna resultado vacío cuando no hay datos")
+	t.Log("consultarPuntoBorde retorna resultado vacío cuando no hay datos")
 }
 
-// TestConsultarUltimoPuntoEdge_ErrorConexion verifica manejo de error de conexion
-func TestConsultarUltimoPuntoEdge_ErrorConexion(t *testing.T) {
-	mockEdge := &mockClienteEdge{
+// TestConsultarUltimoPuntoBorde_ErrorConexion verifica manejo de error de conexion
+func TestConsultarUltimoPuntoBorde_ErrorConexion(t *testing.T) {
+	mockBorde := &mockClienteBorde{
 		err: assert.AnError,
 	}
 
-	m := &ManagerDespachador{
-		clienteEdge: mockEdge,
+	m := &GestorDespachador{
+		clienteBorde: mockBorde,
 	}
 
 	nodo := tipos.Nodo{
@@ -629,22 +629,22 @@ func TestConsultarUltimoPuntoEdge_ErrorConexion(t *testing.T) {
 		PuertoHTTP: "8080",
 	}
 
-	_, err := m.consultarPuntoEdge(nodo, "/sensores/temp", nil, nil, 5*time.Second)
+	_, err := m.consultarPuntoBorde(nodo, "/sensores/temp", nil, nil, 5*time.Second)
 
 	assert.Error(t, err)
-	t.Log("consultarPuntoEdge retorna error cuando hay falla de conexion")
+	t.Log("consultarPuntoBorde retorna error cuando hay falla de conexion")
 }
 
-// TestConsultarUltimoPuntoEdge_ErrorDelEdge verifica manejo de error reportado por el edge
-func TestConsultarUltimoPuntoEdge_ErrorDelEdge(t *testing.T) {
-	mockEdge := &mockClienteEdge{
+// TestConsultarUltimoPuntoBorde_ErrorDelBorde verifica manejo de error reportado por el borde
+func TestConsultarUltimoPuntoBorde_ErrorDelBorde(t *testing.T) {
+	mockBorde := &mockClienteBorde{
 		respuestaPunto: &tipos.RespuestaConsultaPunto{
 			Error: "serie no encontrada",
 		},
 	}
 
-	m := &ManagerDespachador{
-		clienteEdge: mockEdge,
+	m := &GestorDespachador{
+		clienteBorde: mockBorde,
 	}
 
 	nodo := tipos.Nodo{
@@ -653,34 +653,34 @@ func TestConsultarUltimoPuntoEdge_ErrorDelEdge(t *testing.T) {
 		PuertoHTTP: "8080",
 	}
 
-	_, err := m.consultarPuntoEdge(nodo, "/sensores/temp", nil, nil, 5*time.Second)
+	_, err := m.consultarPuntoBorde(nodo, "/sensores/temp", nil, nil, 5*time.Second)
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "serie no encontrada")
-	t.Log("consultarPuntoEdge retorna error cuando el edge reporta error")
+	t.Log("consultarPuntoBorde retorna error cuando el borde reporta error")
 }
 
 // ============================================================================
-// TESTS DE CONSULTAR EDGE CON TIMEOUT
+// TESTS DE CONSULTAR BORDE CON TIMEOUT
 // ============================================================================
 
-// TestConsultarEdgeConTimeout_Exitoso verifica consulta exitosa de rango
-func TestConsultarEdgeConTimeout_Exitoso(t *testing.T) {
+// TestConsultarBordeConTimeout_Exitoso verifica consulta exitosa de rango
+func TestConsultarBordeConTimeout_Exitoso(t *testing.T) {
 	resultadoEsperado := tipos.ResultadoConsultaRango{
 		Series:  []string{"/sensores/temp"},
 		Tiempos: []int64{1000, 2000, 3000},
 		Valores: [][]interface{}{{10.0}, {20.0}, {30.0}},
 	}
 
-	mockEdge := &mockClienteEdge{
+	mockBorde := &mockClienteBorde{
 		respuestaRango: &tipos.RespuestaConsultaRango{
 			Resultado: resultadoEsperado,
 			Error:     "",
 		},
 	}
 
-	m := &ManagerDespachador{
-		clienteEdge: mockEdge,
+	m := &GestorDespachador{
+		clienteBorde: mockBorde,
 	}
 
 	nodo := tipos.Nodo{
@@ -689,25 +689,25 @@ func TestConsultarEdgeConTimeout_Exitoso(t *testing.T) {
 		PuertoHTTP: "8080",
 	}
 
-	resultado, err := m.consultarEdgeConTimeout(nodo, "/sensores/temp", 1000, 3000, 5*time.Second)
+	resultado, err := m.consultarBordeConTimeout(nodo, "/sensores/temp", 1000, 3000, 5*time.Second)
 
 	assert.NoError(t, err)
 	assert.Len(t, resultado.Tiempos, 3)
 	assert.Equal(t, []string{"/sensores/temp"}, resultado.Series)
-	t.Log("consultarEdgeConTimeout retorna resultado tabular correctamente")
+	t.Log("consultarBordeConTimeout retorna resultado tabular correctamente")
 }
 
-// TestConsultarEdgeConTimeout_SinDatos verifica respuesta vacia
-func TestConsultarEdgeConTimeout_SinDatos(t *testing.T) {
-	mockEdge := &mockClienteEdge{
+// TestConsultarBordeConTimeout_SinDatos verifica respuesta vacia
+func TestConsultarBordeConTimeout_SinDatos(t *testing.T) {
+	mockBorde := &mockClienteBorde{
 		respuestaRango: &tipos.RespuestaConsultaRango{
 			Resultado: tipos.ResultadoConsultaRango{},
 			Error:     "",
 		},
 	}
 
-	m := &ManagerDespachador{
-		clienteEdge: mockEdge,
+	m := &GestorDespachador{
+		clienteBorde: mockBorde,
 	}
 
 	nodo := tipos.Nodo{
@@ -716,21 +716,21 @@ func TestConsultarEdgeConTimeout_SinDatos(t *testing.T) {
 		PuertoHTTP: "8080",
 	}
 
-	resultado, err := m.consultarEdgeConTimeout(nodo, "/sensores/temp", 1000, 3000, 5*time.Second)
+	resultado, err := m.consultarBordeConTimeout(nodo, "/sensores/temp", 1000, 3000, 5*time.Second)
 
 	assert.NoError(t, err)
 	assert.Empty(t, resultado.Tiempos)
-	t.Log("consultarEdgeConTimeout retorna resultado vacío cuando no hay datos")
+	t.Log("consultarBordeConTimeout retorna resultado vacío cuando no hay datos")
 }
 
-// TestConsultarEdgeConTimeout_ErrorConexion verifica que error de conexion retorna resultado vacío
-func TestConsultarEdgeConTimeout_ErrorConexion(t *testing.T) {
-	mockEdge := &mockClienteEdge{
+// TestConsultarBordeConTimeout_ErrorConexion verifica que error de conexion retorna resultado vacío
+func TestConsultarBordeConTimeout_ErrorConexion(t *testing.T) {
+	mockBorde := &mockClienteBorde{
 		err: assert.AnError,
 	}
 
-	m := &ManagerDespachador{
-		clienteEdge: mockEdge,
+	m := &GestorDespachador{
+		clienteBorde: mockBorde,
 	}
 
 	nodo := tipos.Nodo{
@@ -739,25 +739,25 @@ func TestConsultarEdgeConTimeout_ErrorConexion(t *testing.T) {
 		PuertoHTTP: "8080",
 	}
 
-	// Error de conexion retorna resultado vacío sin error (el edge puede estar offline)
-	resultado, err := m.consultarEdgeConTimeout(nodo, "/sensores/temp", 1000, 3000, 5*time.Second)
+	// Error de conexion retorna resultado vacío sin error (el borde puede estar offline)
+	resultado, err := m.consultarBordeConTimeout(nodo, "/sensores/temp", 1000, 3000, 5*time.Second)
 
 	assert.Nil(t, err)
 	assert.Empty(t, resultado.Tiempos)
 	assert.Empty(t, resultado.Series)
-	t.Log("consultarEdgeConTimeout retorna resultado vacío cuando hay error de conexion")
+	t.Log("consultarBordeConTimeout retorna resultado vacío cuando hay error de conexion")
 }
 
-// TestConsultarEdgeConTimeout_ErrorDelEdge verifica manejo de error reportado por el edge
-func TestConsultarEdgeConTimeout_ErrorDelEdge(t *testing.T) {
-	mockEdge := &mockClienteEdge{
+// TestConsultarBordeConTimeout_ErrorDelBorde verifica manejo de error reportado por el borde
+func TestConsultarBordeConTimeout_ErrorDelBorde(t *testing.T) {
+	mockBorde := &mockClienteBorde{
 		respuestaRango: &tipos.RespuestaConsultaRango{
 			Error: "serie no existe",
 		},
 	}
 
-	m := &ManagerDespachador{
-		clienteEdge: mockEdge,
+	m := &GestorDespachador{
+		clienteBorde: mockBorde,
 	}
 
 	nodo := tipos.Nodo{
@@ -766,11 +766,11 @@ func TestConsultarEdgeConTimeout_ErrorDelEdge(t *testing.T) {
 		PuertoHTTP: "8080",
 	}
 
-	_, err := m.consultarEdgeConTimeout(nodo, "/sensores/temp", 1000, 3000, 5*time.Second)
+	_, err := m.consultarBordeConTimeout(nodo, "/sensores/temp", 1000, 3000, 5*time.Second)
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "serie no existe")
-	t.Log("consultarEdgeConTimeout retorna error cuando el edge reporta error")
+	t.Log("consultarBordeConTimeout retorna error cuando el borde reporta error")
 }
 
 // ============================================================================
@@ -785,7 +785,7 @@ func TestListarBloquesEnRango_SinBloques(t *testing.T) {
 		},
 	}
 
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		s3:     mockS3,
 		config: tipos.ConfiguracionS3{Bucket: "test-bucket"},
 	}
@@ -809,7 +809,7 @@ func TestListarBloquesEnRango_ConBloques(t *testing.T) {
 		},
 	}
 
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		s3:     mockS3,
 		config: tipos.ConfiguracionS3{Bucket: "test-bucket"},
 	}
@@ -834,7 +834,7 @@ func TestListarBloquesEnRango_TodosLosBloques(t *testing.T) {
 		},
 	}
 
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		s3:     mockS3,
 		config: tipos.ConfiguracionS3{Bucket: "test-bucket"},
 	}
@@ -858,7 +858,7 @@ func TestListarBloquesEnRango_NingunBloqueEnRango(t *testing.T) {
 		},
 	}
 
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		s3:     mockS3,
 		config: tipos.ConfiguracionS3{Bucket: "test-bucket"},
 	}
@@ -877,7 +877,7 @@ func TestListarBloquesEnRango_ErrorS3(t *testing.T) {
 		listObjectsErr: assert.AnError,
 	}
 
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		s3:     mockS3,
 		config: tipos.ConfiguracionS3{Bucket: "test-bucket"},
 	}
@@ -901,7 +901,7 @@ func TestListarBloquesEnRango_FormatoIncorrecto(t *testing.T) {
 		},
 	}
 
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		s3:     mockS3,
 		config: tipos.ConfiguracionS3{Bucket: "test-bucket"},
 	}
@@ -925,7 +925,7 @@ func TestListarBloquesEnRango_OrdenPorTiempo(t *testing.T) {
 		},
 	}
 
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		s3:     mockS3,
 		config: tipos.ConfiguracionS3{Bucket: "test-bucket"},
 	}
@@ -953,7 +953,7 @@ func TestConsultarDatosS3_SinBloques(t *testing.T) {
 		},
 	}
 
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		s3:     mockS3,
 		config: tipos.ConfiguracionS3{Bucket: "test-bucket"},
 	}
@@ -974,7 +974,7 @@ func TestConsultarDatosS3_ErrorListando(t *testing.T) {
 		listObjectsErr: assert.AnError,
 	}
 
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		s3:     mockS3,
 		config: tipos.ConfiguracionS3{Bucket: "test-bucket"},
 	}
@@ -994,7 +994,7 @@ func TestConsultarDatosS3_ErrorListando(t *testing.T) {
 
 // TestConsultarRango_SerieNoEncontrada verifica error cuando la serie no existe
 func TestConsultarRango_SerieNoEncontrada(t *testing.T) {
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		nodos: make(map[string]*tipos.Nodo),
 	}
 
@@ -1005,9 +1005,9 @@ func TestConsultarRango_SerieNoEncontrada(t *testing.T) {
 	t.Log("ConsultarRango retorna error cuando la serie no existe")
 }
 
-// TestConsultarRango_SoloEdge verifica consulta cuando solo edge tiene datos
-func TestConsultarRango_SoloEdge(t *testing.T) {
-	mockEdge := &mockClienteEdge{
+// TestConsultarRango_SoloBorde verifica consulta cuando solo borde tiene datos
+func TestConsultarRango_SoloBorde(t *testing.T) {
+	mockBorde := &mockClienteBorde{
 		respuestaRango: &tipos.RespuestaConsultaRango{
 			Resultado: tipos.ResultadoConsultaRango{
 				Series:  []string{"/sensores/temp"},
@@ -1023,7 +1023,7 @@ func TestConsultarRango_SoloEdge(t *testing.T) {
 		},
 	}
 
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
 				NodoID:     "nodo1",
@@ -1034,9 +1034,9 @@ func TestConsultarRango_SoloEdge(t *testing.T) {
 				},
 			},
 		},
-		clienteEdge: mockEdge,
-		s3:          mockS3,
-		config:      tipos.ConfiguracionS3{Bucket: "test-bucket"},
+		clienteBorde: mockBorde,
+		s3:           mockS3,
+		config:       tipos.ConfiguracionS3{Bucket: "test-bucket"},
 	}
 
 	inicio := time.Unix(0, 500)
@@ -1047,13 +1047,13 @@ func TestConsultarRango_SoloEdge(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Len(t, resultado.Tiempos, 2)
 	assert.Equal(t, []string{"/sensores/temp"}, resultado.Series)
-	t.Log("ConsultarRango combina datos de edge cuando S3 esta vacio")
+	t.Log("ConsultarRango combina datos de borde cuando S3 esta vacio")
 }
 
-// TestConsultarRango_EdgeOffline verifica consulta cuando el edge esta offline
-func TestConsultarRango_EdgeOffline(t *testing.T) {
-	mockEdge := &mockClienteEdge{
-		err: assert.AnError, // Simular edge offline
+// TestConsultarRango_BordeOffline verifica consulta cuando el borde esta offline
+func TestConsultarRango_BordeOffline(t *testing.T) {
+	mockBorde := &mockClienteBorde{
+		err: assert.AnError, // Simular borde offline
 	}
 
 	mockS3 := &mockClienteS3{
@@ -1062,7 +1062,7 @@ func TestConsultarRango_EdgeOffline(t *testing.T) {
 		},
 	}
 
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
 				NodoID:     "nodo1",
@@ -1073,25 +1073,25 @@ func TestConsultarRango_EdgeOffline(t *testing.T) {
 				},
 			},
 		},
-		clienteEdge: mockEdge,
-		s3:          mockS3,
-		config:      tipos.ConfiguracionS3{Bucket: "test-bucket"},
+		clienteBorde: mockBorde,
+		s3:           mockS3,
+		config:       tipos.ConfiguracionS3{Bucket: "test-bucket"},
 	}
 
 	inicio := time.Unix(0, 500)
 	fin := time.Unix(0, 3000)
 
-	// Debe continuar con datos de S3 incluso si el edge falla
+	// Debe continuar con datos de S3 incluso si el borde falla
 	resultado, err := m.ConsultarRango("/sensores/temp", inicio, fin)
 
 	assert.NoError(t, err)
 	assert.Empty(t, resultado.Tiempos)
-	t.Log("ConsultarRango continua cuando edge esta offline")
+	t.Log("ConsultarRango continua cuando borde esta offline")
 }
 
 // TestConsultarRango_ErrorS3 verifica error critico cuando S3 falla
 func TestConsultarRango_ErrorS3(t *testing.T) {
-	mockEdge := &mockClienteEdge{
+	mockBorde := &mockClienteBorde{
 		respuestaRango: &tipos.RespuestaConsultaRango{
 			Resultado: tipos.ResultadoConsultaRango{},
 		},
@@ -1101,7 +1101,7 @@ func TestConsultarRango_ErrorS3(t *testing.T) {
 		listObjectsErr: assert.AnError,
 	}
 
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
 				NodoID:     "nodo1",
@@ -1112,9 +1112,9 @@ func TestConsultarRango_ErrorS3(t *testing.T) {
 				},
 			},
 		},
-		clienteEdge: mockEdge,
-		s3:          mockS3,
-		config:      tipos.ConfiguracionS3{Bucket: "test-bucket"},
+		clienteBorde: mockBorde,
+		s3:           mockS3,
+		config:       tipos.ConfiguracionS3{Bucket: "test-bucket"},
 	}
 
 	inicio := time.Unix(0, 500)
@@ -1134,7 +1134,7 @@ func TestConsultarRango_ErrorS3(t *testing.T) {
 
 // TestConsultarUltimoPunto_SerieNoEncontrada verifica error cuando la serie no existe
 func TestConsultarUltimoPunto_SerieNoEncontrada(t *testing.T) {
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		nodos: make(map[string]*tipos.Nodo),
 	}
 
@@ -1145,13 +1145,13 @@ func TestConsultarUltimoPunto_SerieNoEncontrada(t *testing.T) {
 	t.Log("ConsultarUltimoPunto retorna error cuando la serie no existe")
 }
 
-// TestConsultarUltimoPunto_DesdEdge verifica que retorna dato del edge cuando esta disponible
-func TestConsultarUltimoPunto_DesdeEdge(t *testing.T) {
-	mockEdge := &mockClienteEdge{
+// TestConsultarUltimoPunto_DesdeBorde verifica que retorna dato del borde cuando esta disponible
+func TestConsultarUltimoPunto_DesdeBorde(t *testing.T) {
+	mockBorde := &mockClienteBorde{
 		respuestaPunto: crearRespuestaPuntoColumnar("/sensores/temp", 5000, 50.0),
 	}
 
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
 				NodoID:     "nodo1",
@@ -1162,7 +1162,7 @@ func TestConsultarUltimoPunto_DesdeEdge(t *testing.T) {
 				},
 			},
 		},
-		clienteEdge: mockEdge,
+		clienteBorde: mockBorde,
 	}
 
 	resultado, err := m.ConsultarUltimoPunto("/sensores/temp", nil, nil)
@@ -1172,13 +1172,13 @@ func TestConsultarUltimoPunto_DesdeEdge(t *testing.T) {
 	assert.Equal(t, "/sensores/temp", resultado.Series[0])
 	assert.Equal(t, int64(5000), resultado.Tiempos[0])
 	assert.Equal(t, 50.0, resultado.Valores[0])
-	t.Log("ConsultarUltimoPunto retorna dato del edge en formato columnar")
+	t.Log("ConsultarUltimoPunto retorna dato del borde en formato columnar")
 }
 
-// TestConsultarUltimoPunto_EdgeOffline_SinDatosS3 verifica error cuando no hay datos
-func TestConsultarUltimoPunto_EdgeOffline_SinDatosS3(t *testing.T) {
-	mockEdge := &mockClienteEdge{
-		err: assert.AnError, // Edge offline
+// TestConsultarUltimoPunto_BordeOffline_SinDatosS3 verifica error cuando no hay datos
+func TestConsultarUltimoPunto_BordeOffline_SinDatosS3(t *testing.T) {
+	mockBorde := &mockClienteBorde{
+		err: assert.AnError, // Borde offline
 	}
 
 	mockS3 := &mockClienteS3{
@@ -1187,7 +1187,7 @@ func TestConsultarUltimoPunto_EdgeOffline_SinDatosS3(t *testing.T) {
 		},
 	}
 
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
 				NodoID:     "nodo1",
@@ -1198,9 +1198,9 @@ func TestConsultarUltimoPunto_EdgeOffline_SinDatosS3(t *testing.T) {
 				},
 			},
 		},
-		clienteEdge: mockEdge,
-		s3:          mockS3,
-		config:      tipos.ConfiguracionS3{Bucket: "test-bucket"},
+		clienteBorde: mockBorde,
+		s3:           mockS3,
+		config:       tipos.ConfiguracionS3{Bucket: "test-bucket"},
 	}
 
 	_, err := m.ConsultarUltimoPunto("/sensores/temp", nil, nil)
@@ -1267,11 +1267,11 @@ func crearBloqueComprimidoTest(t *testing.T, mediciones []tipos.Medicion, tipoDa
 }
 
 // ============================================================================
-// TESTS DE CLIENTE EDGE HTTP (httptest)
+// TESTS DE CLIENTE BORDE HTTP (httptest)
 // ============================================================================
 
-// TestClienteEdgeHTTP_ConsultarRango_Exitoso verifica consulta exitosa via HTTP
-func TestClienteEdgeHTTP_ConsultarRango_Exitoso(t *testing.T) {
+// TestClienteBordeHTTP_ConsultarRango_Exitoso verifica consulta exitosa via HTTP
+func TestClienteBordeHTTP_ConsultarRango_Exitoso(t *testing.T) {
 	// Crear respuesta esperada
 	respuestaEsperada := tipos.RespuestaConsultaRango{
 		Resultado: tipos.ResultadoConsultaRango{
@@ -1298,7 +1298,7 @@ func TestClienteEdgeHTTP_ConsultarRango_Exitoso(t *testing.T) {
 	defer servidor.Close()
 
 	// Crear cliente y hacer consulta
-	cliente := nuevoClienteEdgeHTTP()
+	cliente := nuevoClienteBordeHTTP()
 
 	// Extraer host:port del servidor de test
 	direccion := strings.TrimPrefix(servidor.URL, "http://")
@@ -1315,11 +1315,11 @@ func TestClienteEdgeHTTP_ConsultarRango_Exitoso(t *testing.T) {
 	assert.NotNil(t, respuesta)
 	assert.Len(t, respuesta.Resultado.Tiempos, 2)
 	assert.Equal(t, int64(1000), respuesta.Resultado.Tiempos[0])
-	t.Log("clienteEdgeHTTP.ConsultarRango funciona correctamente via HTTP")
+	t.Log("clienteBordeHTTP.ConsultarRango funciona correctamente via HTTP")
 }
 
-// TestClienteEdgeHTTP_ConsultarRango_ErrorHTTP verifica manejo de error HTTP
-func TestClienteEdgeHTTP_ConsultarRango_ErrorHTTP(t *testing.T) {
+// TestClienteBordeHTTP_ConsultarRango_ErrorHTTP verifica manejo de error HTTP
+func TestClienteBordeHTTP_ConsultarRango_ErrorHTTP(t *testing.T) {
 	// Crear servidor que retorna error
 	servidor := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -1327,7 +1327,7 @@ func TestClienteEdgeHTTP_ConsultarRango_ErrorHTTP(t *testing.T) {
 	}))
 	defer servidor.Close()
 
-	cliente := nuevoClienteEdgeHTTP()
+	cliente := nuevoClienteBordeHTTP()
 	direccion := strings.TrimPrefix(servidor.URL, "http://")
 
 	solicitud := tipos.SolicitudConsultaRango{
@@ -1340,12 +1340,12 @@ func TestClienteEdgeHTTP_ConsultarRango_ErrorHTTP(t *testing.T) {
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "500")
-	t.Log("clienteEdgeHTTP.ConsultarRango maneja errores HTTP correctamente")
+	t.Log("clienteBordeHTTP.ConsultarRango maneja errores HTTP correctamente")
 }
 
-// TestClienteEdgeHTTP_ConsultarRango_ErrorConexion verifica manejo de error de conexion
-func TestClienteEdgeHTTP_ConsultarRango_ErrorConexion(t *testing.T) {
-	cliente := nuevoClienteEdgeHTTP()
+// TestClienteBordeHTTP_ConsultarRango_ErrorConexion verifica manejo de error de conexion
+func TestClienteBordeHTTP_ConsultarRango_ErrorConexion(t *testing.T) {
+	cliente := nuevoClienteBordeHTTP()
 
 	// Usar direccion invalida
 	solicitud := tipos.SolicitudConsultaRango{
@@ -1358,11 +1358,11 @@ func TestClienteEdgeHTTP_ConsultarRango_ErrorConexion(t *testing.T) {
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "error en request HTTP")
-	t.Log("clienteEdgeHTTP.ConsultarRango maneja errores de conexion")
+	t.Log("clienteBordeHTTP.ConsultarRango maneja errores de conexion")
 }
 
-// TestClienteEdgeHTTP_ConsultarRango_ErrorDeserializacion verifica manejo de respuesta invalida
-func TestClienteEdgeHTTP_ConsultarRango_ErrorDeserializacion(t *testing.T) {
+// TestClienteBordeHTTP_ConsultarRango_ErrorDeserializacion verifica manejo de respuesta invalida
+func TestClienteBordeHTTP_ConsultarRango_ErrorDeserializacion(t *testing.T) {
 	// Crear servidor que retorna datos invalidos
 	servidor := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -1370,7 +1370,7 @@ func TestClienteEdgeHTTP_ConsultarRango_ErrorDeserializacion(t *testing.T) {
 	}))
 	defer servidor.Close()
 
-	cliente := nuevoClienteEdgeHTTP()
+	cliente := nuevoClienteBordeHTTP()
 	direccion := strings.TrimPrefix(servidor.URL, "http://")
 
 	solicitud := tipos.SolicitudConsultaRango{
@@ -1383,11 +1383,11 @@ func TestClienteEdgeHTTP_ConsultarRango_ErrorDeserializacion(t *testing.T) {
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "deserializando")
-	t.Log("clienteEdgeHTTP.ConsultarRango maneja errores de deserializacion")
+	t.Log("clienteBordeHTTP.ConsultarRango maneja errores de deserializacion")
 }
 
-// TestClienteEdgeHTTP_ConsultarUltimoPunto_Exitoso verifica consulta de punto via HTTP
-func TestClienteEdgeHTTP_ConsultarUltimoPunto_Exitoso(t *testing.T) {
+// TestClienteBordeHTTP_ConsultarUltimoPunto_Exitoso verifica consulta de punto via HTTP
+func TestClienteBordeHTTP_ConsultarUltimoPunto_Exitoso(t *testing.T) {
 	// Crear respuesta esperada en formato columnar
 	respuestaEsperada := tipos.RespuestaConsultaPunto{
 		Resultado: tipos.ResultadoConsultaPunto{
@@ -1409,7 +1409,7 @@ func TestClienteEdgeHTTP_ConsultarUltimoPunto_Exitoso(t *testing.T) {
 	}))
 	defer servidor.Close()
 
-	cliente := nuevoClienteEdgeHTTP()
+	cliente := nuevoClienteBordeHTTP()
 	direccion := strings.TrimPrefix(servidor.URL, "http://")
 
 	solicitud := tipos.SolicitudConsultaPunto{
@@ -1423,18 +1423,18 @@ func TestClienteEdgeHTTP_ConsultarUltimoPunto_Exitoso(t *testing.T) {
 	require.Len(t, respuesta.Resultado.Series, 1)
 	assert.Equal(t, "/sensores/temp", respuesta.Resultado.Series[0])
 	assert.Equal(t, int64(5000), respuesta.Resultado.Tiempos[0])
-	t.Log("clienteEdgeHTTP.ConsultarUltimoPunto funciona correctamente")
+	t.Log("clienteBordeHTTP.ConsultarUltimoPunto funciona correctamente")
 }
 
-// TestClienteEdgeHTTP_ConsultarUltimoPunto_ErrorHTTP verifica manejo de error HTTP
-func TestClienteEdgeHTTP_ConsultarUltimoPunto_ErrorHTTP(t *testing.T) {
+// TestClienteBordeHTTP_ConsultarUltimoPunto_ErrorHTTP verifica manejo de error HTTP
+func TestClienteBordeHTTP_ConsultarUltimoPunto_ErrorHTTP(t *testing.T) {
 	servidor := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		w.Write([]byte("serie no encontrada"))
 	}))
 	defer servidor.Close()
 
-	cliente := nuevoClienteEdgeHTTP()
+	cliente := nuevoClienteBordeHTTP()
 	direccion := strings.TrimPrefix(servidor.URL, "http://")
 
 	solicitud := tipos.SolicitudConsultaPunto{Serie: "/sensores/noexiste"}
@@ -1442,19 +1442,19 @@ func TestClienteEdgeHTTP_ConsultarUltimoPunto_ErrorHTTP(t *testing.T) {
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "404")
-	t.Log("clienteEdgeHTTP.ConsultarUltimoPunto maneja errores HTTP")
+	t.Log("clienteBordeHTTP.ConsultarUltimoPunto maneja errores HTTP")
 }
 
-// TestClienteEdgeHTTP_ConsultarUltimoPunto_ErrorConexion verifica error de conexion
-func TestClienteEdgeHTTP_ConsultarUltimoPunto_ErrorConexion(t *testing.T) {
-	cliente := nuevoClienteEdgeHTTP()
+// TestClienteBordeHTTP_ConsultarUltimoPunto_ErrorConexion verifica error de conexion
+func TestClienteBordeHTTP_ConsultarUltimoPunto_ErrorConexion(t *testing.T) {
+	cliente := nuevoClienteBordeHTTP()
 
 	solicitud := tipos.SolicitudConsultaPunto{Serie: "/sensores/temp"}
 	_, err := cliente.ConsultarUltimoPunto(context.Background(), "1", "localhost:99999", solicitud)
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "error en request HTTP")
-	t.Log("clienteEdgeHTTP.ConsultarUltimoPunto maneja errores de conexion")
+	t.Log("clienteBordeHTTP.ConsultarUltimoPunto maneja errores de conexion")
 }
 
 // ============================================================================
@@ -1477,7 +1477,7 @@ func TestDescargarYDescomprimirBloque_Exitoso(t *testing.T) {
 		getObjectData: bloqueComprimido,
 	}
 
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		s3:     mockS3,
 		config: tipos.ConfiguracionS3{Bucket: "test-bucket"},
 	}
@@ -1504,7 +1504,7 @@ func TestDescargarYDescomprimirBloque_ErrorDescarga(t *testing.T) {
 		getObjectErr: assert.AnError,
 	}
 
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		s3:     mockS3,
 		config: tipos.ConfiguracionS3{Bucket: "test-bucket"},
 	}
@@ -1529,7 +1529,7 @@ func TestDescargarYDescomprimirBloque_ErrorDescompresion(t *testing.T) {
 		getObjectData: []byte("datos invalidos no comprimidos"),
 	}
 
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		s3:     mockS3,
 		config: tipos.ConfiguracionS3{Bucket: "test-bucket"},
 	}
@@ -1573,7 +1573,7 @@ func TestConsultarDatosS3_ConBloquesValidos(t *testing.T) {
 		getObjectData: bloqueComprimido,
 	}
 
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		s3:     mockS3,
 		config: tipos.ConfiguracionS3{Bucket: "test-bucket"},
 	}
@@ -1599,7 +1599,7 @@ func TestConsultarDatosS3_ConBloquesValidos(t *testing.T) {
 // TESTS DE CONSULTAR ULTIMO PUNTO DESDE S3
 // ============================================================================
 
-// TestConsultarUltimoPunto_DesdeS3 verifica fallback a S3 cuando edge no responde
+// TestConsultarUltimoPunto_DesdeS3 verifica fallback a S3 cuando borde no responde
 func TestConsultarUltimoPunto_DesdeS3(t *testing.T) {
 	// Crear mediciones de prueba
 	mediciones := []tipos.Medicion{
@@ -1610,8 +1610,8 @@ func TestConsultarUltimoPunto_DesdeS3(t *testing.T) {
 
 	bloqueComprimido := crearBloqueComprimidoTest(t, mediciones, tipos.Integer, tipos.DeltaDelta, tipos.Ninguna)
 
-	// Mock edge que no encuentra datos (retorna resultado vacío)
-	mockEdge := &mockClienteEdge{
+	// Mock borde que no encuentra datos (retorna resultado vacío)
+	mockBorde := &mockClienteBorde{
 		respuestaPunto: crearRespuestaPuntoVacia(),
 	}
 
@@ -1624,7 +1624,7 @@ func TestConsultarUltimoPunto_DesdeS3(t *testing.T) {
 		getObjectData: bloqueComprimido,
 	}
 
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
 				NodoID:     "nodo1",
@@ -1641,9 +1641,9 @@ func TestConsultarUltimoPunto_DesdeS3(t *testing.T) {
 				},
 			},
 		},
-		clienteEdge: mockEdge,
-		s3:          mockS3,
-		config:      tipos.ConfiguracionS3{Bucket: "test-bucket"},
+		clienteBorde: mockBorde,
+		s3:           mockS3,
+		config:       tipos.ConfiguracionS3{Bucket: "test-bucket"},
 	}
 
 	resultado, err := m.ConsultarUltimoPunto("/sensores/temp", nil, nil)
@@ -1658,17 +1658,17 @@ func TestConsultarUltimoPunto_DesdeS3(t *testing.T) {
 }
 
 // ============================================================================
-// TESTS DE NUEVO CLIENTE EDGE HTTP
+// TESTS DE NUEVO CLIENTE BORDE HTTP
 // ============================================================================
 
-// TestNuevoClienteEdgeHTTP verifica creacion del cliente
-func TestNuevoClienteEdgeHTTP(t *testing.T) {
-	cliente := nuevoClienteEdgeHTTP()
+// TestNuevoClienteBordeHTTP verifica creacion del cliente
+func TestNuevoClienteBordeHTTP(t *testing.T) {
+	cliente := nuevoClienteBordeHTTP()
 
 	assert.NotNil(t, cliente)
 	assert.NotNil(t, cliente.httpClient)
 	assert.Equal(t, 10*time.Second, cliente.httpClient.Timeout)
-	t.Log("nuevoClienteEdgeHTTP crea cliente correctamente")
+	t.Log("nuevoClienteBordeHTTP crea cliente correctamente")
 }
 
 // ============================================================================
@@ -1683,7 +1683,7 @@ func TestCargarNodosDesdeS3_SinNodos(t *testing.T) {
 		},
 	}
 
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		s3:     mockS3,
 		config: tipos.ConfiguracionS3{Bucket: "test-bucket"},
 		nodos:  make(map[string]*tipos.Nodo),
@@ -1718,7 +1718,7 @@ func TestCargarNodosDesdeS3_ConNodos(t *testing.T) {
 		getObjectData: nodoJSON,
 	}
 
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		s3:     mockS3,
 		config: tipos.ConfiguracionS3{Bucket: "test-bucket"},
 		nodos:  make(map[string]*tipos.Nodo),
@@ -1739,7 +1739,7 @@ func TestCargarNodosDesdeS3_ErrorListando(t *testing.T) {
 		listObjectsErr: assert.AnError,
 	}
 
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		s3:     mockS3,
 		config: tipos.ConfiguracionS3{Bucket: "test-bucket"},
 		nodos:  make(map[string]*tipos.Nodo),
@@ -1763,7 +1763,7 @@ func TestCargarNodosDesdeS3_ErrorGetObject(t *testing.T) {
 		getObjectErr: assert.AnError,
 	}
 
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		s3:     mockS3,
 		config: tipos.ConfiguracionS3{Bucket: "test-bucket"},
 		nodos:  make(map[string]*tipos.Nodo),
@@ -1788,7 +1788,7 @@ func TestCargarNodosDesdeS3_JSONInvalido(t *testing.T) {
 		getObjectData: []byte("esto no es JSON valido"),
 	}
 
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		s3:     mockS3,
 		config: tipos.ConfiguracionS3{Bucket: "test-bucket"},
 		nodos:  make(map[string]*tipos.Nodo),
@@ -1821,7 +1821,7 @@ func TestCargarNodosDesdeS3_MultiplesNodos(t *testing.T) {
 	// Configurar datos del primer nodo
 	mockS3.getObjectData = nodo1JSON
 
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		s3:     mockS3,
 		config: tipos.ConfiguracionS3{Bucket: "test-bucket"},
 		nodos:  make(map[string]*tipos.Nodo),
@@ -1848,7 +1848,7 @@ func TestCrear_ConClienteS3Inyectado(t *testing.T) {
 		},
 	}
 
-	mockEdge := &mockClienteEdge{}
+	mockBorde := &mockClienteBorde{}
 
 	opts := opcionesInternas{
 		Opciones: Opciones{
@@ -1859,19 +1859,19 @@ func TestCrear_ConClienteS3Inyectado(t *testing.T) {
 				Bucket:          "test-bucket",
 			},
 		},
-		clienteS3:   mockS3,
-		clienteEdge: mockEdge,
+		clienteS3:    mockS3,
+		clienteBorde: mockBorde,
 	}
 
-	manager, err := crearConOpciones(opts)
+	gestor, err := crearConOpciones(opts)
 
 	assert.NoError(t, err)
-	assert.NotNil(t, manager)
-	assert.NotNil(t, manager.s3)
-	assert.NotNil(t, manager.clienteEdge)
+	assert.NotNil(t, gestor)
+	assert.NotNil(t, gestor.s3)
+	assert.NotNil(t, gestor.clienteBorde)
 
 	// Cerrar para limpiar goroutine
-	manager.Cerrar()
+	gestor.Cerrar()
 	t.Log("Crear funciona con cliente S3 inyectado")
 }
 
@@ -1894,16 +1894,16 @@ func TestCrear_BucketNoExiste_SeCreaNuevo(t *testing.T) {
 				Bucket:          "nuevo-bucket",
 			},
 		},
-		clienteS3:   mockS3,
-		clienteEdge: &mockClienteEdge{},
+		clienteS3:    mockS3,
+		clienteBorde: &mockClienteBorde{},
 	}
 
-	manager, err := crearConOpciones(opts)
+	gestor, err := crearConOpciones(opts)
 
 	assert.NoError(t, err)
-	assert.NotNil(t, manager)
+	assert.NotNil(t, gestor)
 
-	manager.Cerrar()
+	gestor.Cerrar()
 	t.Log("Crear crea bucket si no existe")
 }
 
@@ -1923,14 +1923,14 @@ func TestCrear_ErrorCreandoBucket(t *testing.T) {
 				Bucket:          "bucket-fallido",
 			},
 		},
-		clienteS3:   mockS3,
-		clienteEdge: &mockClienteEdge{},
+		clienteS3:    mockS3,
+		clienteBorde: &mockClienteBorde{},
 	}
 
-	manager, err := crearConOpciones(opts)
+	gestor, err := crearConOpciones(opts)
 
 	assert.Error(t, err)
-	assert.Nil(t, manager)
+	assert.Nil(t, gestor)
 	assert.Contains(t, err.Error(), "crear bucket")
 	t.Log("Crear retorna error si falla creacion de bucket")
 }
@@ -1947,10 +1947,10 @@ func TestCrear_SinClienteS3_ConfigInvalida(t *testing.T) {
 		},
 	}
 
-	manager, err := Crear(opts)
+	gestor, err := Crear(opts)
 
 	assert.Error(t, err)
-	assert.Nil(t, manager)
+	assert.Nil(t, gestor)
 	t.Log("Crear retorna error con config S3 invalida")
 }
 
@@ -1982,23 +1982,23 @@ func TestCrear_ConNodosExistentes(t *testing.T) {
 				Bucket:          "test-bucket",
 			},
 		},
-		clienteS3:   mockS3,
-		clienteEdge: &mockClienteEdge{},
+		clienteS3:    mockS3,
+		clienteBorde: &mockClienteBorde{},
 	}
 
-	manager, err := crearConOpciones(opts)
+	gestor, err := crearConOpciones(opts)
 
 	assert.NoError(t, err)
-	assert.NotNil(t, manager)
-	assert.Len(t, manager.nodos, 1)
-	assert.Contains(t, manager.nodos, "nodo-existente")
+	assert.NotNil(t, gestor)
+	assert.Len(t, gestor.nodos, 1)
+	assert.Contains(t, gestor.nodos, "nodo-existente")
 
-	manager.Cerrar()
+	gestor.Cerrar()
 	t.Log("Crear carga nodos existentes desde S3")
 }
 
-// TestCrear_SinClienteEdge_UsaHTTP verifica que crea cliente HTTP por defecto
-func TestCrear_SinClienteEdge_UsaHTTP(t *testing.T) {
+// TestCrear_SinClienteBorde_UsaHTTP verifica que crea cliente HTTP por defecto
+func TestCrear_SinClienteBorde_UsaHTTP(t *testing.T) {
 	mockS3 := &mockClienteS3{
 		headBucketOutput: &s3.HeadBucketOutput{},
 		listObjectsOutput: &s3.ListObjectsV2Output{
@@ -2015,21 +2015,21 @@ func TestCrear_SinClienteEdge_UsaHTTP(t *testing.T) {
 				Bucket:          "test-bucket",
 			},
 		},
-		clienteS3:   mockS3,
-		clienteEdge: nil, // No inyectado
+		clienteS3:    mockS3,
+		clienteBorde: nil, // No inyectado
 	}
 
-	manager, err := crearConOpciones(opts)
+	gestor, err := crearConOpciones(opts)
 
 	assert.NoError(t, err)
-	assert.NotNil(t, manager)
-	assert.NotNil(t, manager.clienteEdge)
-	// Verificar que es del tipo clienteEdgeHTTP
-	_, ok := manager.clienteEdge.(*clienteEdgeHTTP)
-	assert.True(t, ok, "Debe crear clienteEdgeHTTP por defecto")
+	assert.NotNil(t, gestor)
+	assert.NotNil(t, gestor.clienteBorde)
+	// Verificar que es del tipo clienteBordeHTTP
+	_, ok := gestor.clienteBorde.(*clienteBordeHTTP)
+	assert.True(t, ok, "Debe crear clienteBordeHTTP por defecto")
 
-	manager.Cerrar()
-	t.Log("Crear usa clienteEdgeHTTP por defecto")
+	gestor.Cerrar()
+	t.Log("Crear usa clienteBordeHTTP por defecto")
 }
 
 // ============================================================================
@@ -2038,7 +2038,7 @@ func TestCrear_SinClienteEdge_UsaHTTP(t *testing.T) {
 
 // TestConsultarAgregacion_SerieNoEncontrada verifica error cuando la serie no existe
 func TestConsultarAgregacion_SerieNoEncontrada(t *testing.T) {
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		nodos: make(map[string]*tipos.Nodo),
 	}
 
@@ -2051,14 +2051,14 @@ func TestConsultarAgregacion_SerieNoEncontrada(t *testing.T) {
 
 // TestConsultarAgregacion_Promedio verifica calculo de promedio
 func TestConsultarAgregacion_Promedio(t *testing.T) {
-	medicionesEdge := []tipos.Medicion{
+	medicionesBorde := []tipos.Medicion{
 		{Tiempo: 1000, Valor: 10.0},
 		{Tiempo: 2000, Valor: 20.0},
 		{Tiempo: 3000, Valor: 30.0},
 	}
 
-	mockEdge := &mockClienteEdge{
-		respuestaRango: crearRespuestaRangoTabular("/sensores/temp", medicionesEdge),
+	mockBorde := &mockClienteBorde{
+		respuestaRango: crearRespuestaRangoTabular("/sensores/temp", medicionesBorde),
 	}
 
 	mockS3 := &mockClienteS3{
@@ -2067,7 +2067,7 @@ func TestConsultarAgregacion_Promedio(t *testing.T) {
 		},
 	}
 
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
 				NodoID:     "nodo1",
@@ -2078,9 +2078,9 @@ func TestConsultarAgregacion_Promedio(t *testing.T) {
 				},
 			},
 		},
-		clienteEdge: mockEdge,
-		s3:          mockS3,
-		config:      tipos.ConfiguracionS3{Bucket: "test-bucket"},
+		clienteBorde: mockBorde,
+		s3:           mockS3,
+		config:       tipos.ConfiguracionS3{Bucket: "test-bucket"},
 	}
 
 	inicio := time.Unix(0, 500)
@@ -2097,14 +2097,14 @@ func TestConsultarAgregacion_Promedio(t *testing.T) {
 
 // TestConsultarAgregacion_Maximo verifica calculo de maximo
 func TestConsultarAgregacion_Maximo(t *testing.T) {
-	medicionesEdge := []tipos.Medicion{
+	medicionesBorde := []tipos.Medicion{
 		{Tiempo: 1000, Valor: 10.0},
 		{Tiempo: 2000, Valor: 50.0},
 		{Tiempo: 3000, Valor: 30.0},
 	}
 
-	mockEdge := &mockClienteEdge{
-		respuestaRango: crearRespuestaRangoTabular("/sensores/temp", medicionesEdge),
+	mockBorde := &mockClienteBorde{
+		respuestaRango: crearRespuestaRangoTabular("/sensores/temp", medicionesBorde),
 	}
 
 	mockS3 := &mockClienteS3{
@@ -2113,7 +2113,7 @@ func TestConsultarAgregacion_Maximo(t *testing.T) {
 		},
 	}
 
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
 				NodoID:     "nodo1",
@@ -2124,9 +2124,9 @@ func TestConsultarAgregacion_Maximo(t *testing.T) {
 				},
 			},
 		},
-		clienteEdge: mockEdge,
-		s3:          mockS3,
-		config:      tipos.ConfiguracionS3{Bucket: "test-bucket"},
+		clienteBorde: mockBorde,
+		s3:           mockS3,
+		config:       tipos.ConfiguracionS3{Bucket: "test-bucket"},
 	}
 
 	inicio := time.Unix(0, 500)
@@ -2142,14 +2142,14 @@ func TestConsultarAgregacion_Maximo(t *testing.T) {
 
 // TestConsultarAgregacion_Minimo verifica calculo de minimo
 func TestConsultarAgregacion_Minimo(t *testing.T) {
-	medicionesEdge := []tipos.Medicion{
+	medicionesBorde := []tipos.Medicion{
 		{Tiempo: 1000, Valor: 10.0},
 		{Tiempo: 2000, Valor: 50.0},
 		{Tiempo: 3000, Valor: 5.0},
 	}
 
-	mockEdge := &mockClienteEdge{
-		respuestaRango: crearRespuestaRangoTabular("/sensores/temp", medicionesEdge),
+	mockBorde := &mockClienteBorde{
+		respuestaRango: crearRespuestaRangoTabular("/sensores/temp", medicionesBorde),
 	}
 
 	mockS3 := &mockClienteS3{
@@ -2158,7 +2158,7 @@ func TestConsultarAgregacion_Minimo(t *testing.T) {
 		},
 	}
 
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
 				NodoID:     "nodo1",
@@ -2169,9 +2169,9 @@ func TestConsultarAgregacion_Minimo(t *testing.T) {
 				},
 			},
 		},
-		clienteEdge: mockEdge,
-		s3:          mockS3,
-		config:      tipos.ConfiguracionS3{Bucket: "test-bucket"},
+		clienteBorde: mockBorde,
+		s3:           mockS3,
+		config:       tipos.ConfiguracionS3{Bucket: "test-bucket"},
 	}
 
 	inicio := time.Unix(0, 500)
@@ -2187,14 +2187,14 @@ func TestConsultarAgregacion_Minimo(t *testing.T) {
 
 // TestConsultarAgregacion_Suma verifica calculo de suma
 func TestConsultarAgregacion_Suma(t *testing.T) {
-	medicionesEdge := []tipos.Medicion{
+	medicionesBorde := []tipos.Medicion{
 		{Tiempo: 1000, Valor: 10.0},
 		{Tiempo: 2000, Valor: 20.0},
 		{Tiempo: 3000, Valor: 30.0},
 	}
 
-	mockEdge := &mockClienteEdge{
-		respuestaRango: crearRespuestaRangoTabular("/sensores/temp", medicionesEdge),
+	mockBorde := &mockClienteBorde{
+		respuestaRango: crearRespuestaRangoTabular("/sensores/temp", medicionesBorde),
 	}
 
 	mockS3 := &mockClienteS3{
@@ -2203,7 +2203,7 @@ func TestConsultarAgregacion_Suma(t *testing.T) {
 		},
 	}
 
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
 				NodoID:     "nodo1",
@@ -2214,9 +2214,9 @@ func TestConsultarAgregacion_Suma(t *testing.T) {
 				},
 			},
 		},
-		clienteEdge: mockEdge,
-		s3:          mockS3,
-		config:      tipos.ConfiguracionS3{Bucket: "test-bucket"},
+		clienteBorde: mockBorde,
+		s3:           mockS3,
+		config:       tipos.ConfiguracionS3{Bucket: "test-bucket"},
 	}
 
 	inicio := time.Unix(0, 500)
@@ -2232,14 +2232,14 @@ func TestConsultarAgregacion_Suma(t *testing.T) {
 
 // TestConsultarAgregacion_Count verifica calculo de count
 func TestConsultarAgregacion_Count(t *testing.T) {
-	medicionesEdge := []tipos.Medicion{
+	medicionesBorde := []tipos.Medicion{
 		{Tiempo: 1000, Valor: 10.0},
 		{Tiempo: 2000, Valor: 20.0},
 		{Tiempo: 3000, Valor: 30.0},
 	}
 
-	mockEdge := &mockClienteEdge{
-		respuestaRango: crearRespuestaRangoTabular("/sensores/temp", medicionesEdge),
+	mockBorde := &mockClienteBorde{
+		respuestaRango: crearRespuestaRangoTabular("/sensores/temp", medicionesBorde),
 	}
 
 	mockS3 := &mockClienteS3{
@@ -2248,7 +2248,7 @@ func TestConsultarAgregacion_Count(t *testing.T) {
 		},
 	}
 
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
 				NodoID:     "nodo1",
@@ -2259,15 +2259,15 @@ func TestConsultarAgregacion_Count(t *testing.T) {
 				},
 			},
 		},
-		clienteEdge: mockEdge,
-		s3:          mockS3,
-		config:      tipos.ConfiguracionS3{Bucket: "test-bucket"},
+		clienteBorde: mockBorde,
+		s3:           mockS3,
+		config:       tipos.ConfiguracionS3{Bucket: "test-bucket"},
 	}
 
 	inicio := time.Unix(0, 500)
 	fin := time.Unix(0, 3500)
 
-	resultado, err := m.ConsultarAgregacion("/sensores/temp", inicio, fin, []tipos.TipoAgregacion{tipos.AgregacionCount})
+	resultado, err := m.ConsultarAgregacion("/sensores/temp", inicio, fin, []tipos.TipoAgregacion{tipos.AgregacionConteo})
 
 	assert.NoError(t, err)
 	require.Len(t, resultado.Series, 1)
@@ -2277,7 +2277,7 @@ func TestConsultarAgregacion_Count(t *testing.T) {
 
 // TestConsultarAgregacion_SinDatos verifica error cuando no hay datos
 func TestConsultarAgregacion_SinDatos(t *testing.T) {
-	mockEdge := &mockClienteEdge{
+	mockBorde := &mockClienteBorde{
 		respuestaRango: crearRespuestaRangoTabular("/sensores/temp", []tipos.Medicion{}),
 	}
 
@@ -2287,7 +2287,7 @@ func TestConsultarAgregacion_SinDatos(t *testing.T) {
 		},
 	}
 
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
 				NodoID:     "nodo1",
@@ -2298,9 +2298,9 @@ func TestConsultarAgregacion_SinDatos(t *testing.T) {
 				},
 			},
 		},
-		clienteEdge: mockEdge,
-		s3:          mockS3,
-		config:      tipos.ConfiguracionS3{Bucket: "test-bucket"},
+		clienteBorde: mockBorde,
+		s3:           mockS3,
+		config:       tipos.ConfiguracionS3{Bucket: "test-bucket"},
 	}
 
 	inicio := time.Unix(0, 500)
@@ -2315,14 +2315,14 @@ func TestConsultarAgregacion_SinDatos(t *testing.T) {
 
 // TestConsultarAgregacion_ConInt64 verifica agregacion con valores int64
 func TestConsultarAgregacion_ConInt64(t *testing.T) {
-	medicionesEdge := []tipos.Medicion{
+	medicionesBorde := []tipos.Medicion{
 		{Tiempo: 1000, Valor: int64(10)},
 		{Tiempo: 2000, Valor: int64(20)},
 		{Tiempo: 3000, Valor: int64(30)},
 	}
 
-	mockEdge := &mockClienteEdge{
-		respuestaRango: crearRespuestaRangoTabular("/sensores/temp", medicionesEdge),
+	mockBorde := &mockClienteBorde{
+		respuestaRango: crearRespuestaRangoTabular("/sensores/temp", medicionesBorde),
 	}
 
 	mockS3 := &mockClienteS3{
@@ -2331,7 +2331,7 @@ func TestConsultarAgregacion_ConInt64(t *testing.T) {
 		},
 	}
 
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
 				NodoID:     "nodo1",
@@ -2342,9 +2342,9 @@ func TestConsultarAgregacion_ConInt64(t *testing.T) {
 				},
 			},
 		},
-		clienteEdge: mockEdge,
-		s3:          mockS3,
-		config:      tipos.ConfiguracionS3{Bucket: "test-bucket"},
+		clienteBorde: mockBorde,
+		s3:           mockS3,
+		config:       tipos.ConfiguracionS3{Bucket: "test-bucket"},
 	}
 
 	inicio := time.Unix(0, 500)
@@ -2364,7 +2364,7 @@ func TestConsultarAgregacion_ConInt64(t *testing.T) {
 
 // TestConsultarAgregacionTemporal_SerieNoEncontrada verifica error cuando la serie no existe
 func TestConsultarAgregacionTemporal_SerieNoEncontrada(t *testing.T) {
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		nodos: make(map[string]*tipos.Nodo),
 	}
 
@@ -2377,7 +2377,7 @@ func TestConsultarAgregacionTemporal_SerieNoEncontrada(t *testing.T) {
 
 // TestConsultarAgregacionTemporal_IntervaloInvalido verifica error con intervalo <= 0
 func TestConsultarAgregacionTemporal_IntervaloInvalido(t *testing.T) {
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
 				NodoID: "nodo1",
@@ -2398,7 +2398,7 @@ func TestConsultarAgregacionTemporal_IntervaloInvalido(t *testing.T) {
 // TestConsultarAgregacionTemporal_MultipleBuckets verifica generacion de multiples buckets
 func TestConsultarAgregacionTemporal_MultipleBuckets(t *testing.T) {
 	// Mediciones distribuidas en 3 buckets de 1000ns cada uno
-	medicionesEdge := []tipos.Medicion{
+	medicionesBorde := []tipos.Medicion{
 		// Bucket 1: [0, 1000)
 		{Tiempo: 100, Valor: 10.0},
 		{Tiempo: 500, Valor: 20.0},
@@ -2410,8 +2410,8 @@ func TestConsultarAgregacionTemporal_MultipleBuckets(t *testing.T) {
 		{Tiempo: 2500, Valor: 60.0},
 	}
 
-	mockEdge := &mockClienteEdge{
-		respuestaRango: crearRespuestaRangoTabular("/sensores/temp", medicionesEdge),
+	mockBorde := &mockClienteBorde{
+		respuestaRango: crearRespuestaRangoTabular("/sensores/temp", medicionesBorde),
 	}
 
 	mockS3 := &mockClienteS3{
@@ -2420,7 +2420,7 @@ func TestConsultarAgregacionTemporal_MultipleBuckets(t *testing.T) {
 		},
 	}
 
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
 				NodoID:     "nodo1",
@@ -2431,9 +2431,9 @@ func TestConsultarAgregacionTemporal_MultipleBuckets(t *testing.T) {
 				},
 			},
 		},
-		clienteEdge: mockEdge,
-		s3:          mockS3,
-		config:      tipos.ConfiguracionS3{Bucket: "test-bucket"},
+		clienteBorde: mockBorde,
+		s3:           mockS3,
+		config:       tipos.ConfiguracionS3{Bucket: "test-bucket"},
 	}
 
 	inicio := time.Unix(0, 0)
@@ -2460,7 +2460,7 @@ func TestConsultarAgregacionTemporal_MultipleBuckets(t *testing.T) {
 
 // TestConsultarAgregacionTemporal_SinDatos verifica error cuando no hay datos
 func TestConsultarAgregacionTemporal_SinDatos(t *testing.T) {
-	mockEdge := &mockClienteEdge{
+	mockBorde := &mockClienteBorde{
 		respuestaRango: crearRespuestaRangoTabular("/sensores/temp", []tipos.Medicion{}),
 	}
 
@@ -2470,7 +2470,7 @@ func TestConsultarAgregacionTemporal_SinDatos(t *testing.T) {
 		},
 	}
 
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
 				NodoID:     "nodo1",
@@ -2481,9 +2481,9 @@ func TestConsultarAgregacionTemporal_SinDatos(t *testing.T) {
 				},
 			},
 		},
-		clienteEdge: mockEdge,
-		s3:          mockS3,
-		config:      tipos.ConfiguracionS3{Bucket: "test-bucket"},
+		clienteBorde: mockBorde,
+		s3:           mockS3,
+		config:       tipos.ConfiguracionS3{Bucket: "test-bucket"},
 	}
 
 	inicio := time.Unix(0, 0)
@@ -2499,14 +2499,14 @@ func TestConsultarAgregacionTemporal_SinDatos(t *testing.T) {
 // TestConsultarAgregacionTemporal_OrdenCronologico verifica que los resultados esten ordenados
 func TestConsultarAgregacionTemporal_OrdenCronologico(t *testing.T) {
 	// Mediciones desordenadas
-	medicionesEdge := []tipos.Medicion{
+	medicionesBorde := []tipos.Medicion{
 		{Tiempo: 2100, Valor: 30.0},
 		{Tiempo: 100, Valor: 10.0},
 		{Tiempo: 1100, Valor: 20.0},
 	}
 
-	mockEdge := &mockClienteEdge{
-		respuestaRango: crearRespuestaRangoTabular("/sensores/temp", medicionesEdge),
+	mockBorde := &mockClienteBorde{
+		respuestaRango: crearRespuestaRangoTabular("/sensores/temp", medicionesBorde),
 	}
 
 	mockS3 := &mockClienteS3{
@@ -2515,7 +2515,7 @@ func TestConsultarAgregacionTemporal_OrdenCronologico(t *testing.T) {
 		},
 	}
 
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
 				NodoID:     "nodo1",
@@ -2526,9 +2526,9 @@ func TestConsultarAgregacionTemporal_OrdenCronologico(t *testing.T) {
 				},
 			},
 		},
-		clienteEdge: mockEdge,
-		s3:          mockS3,
-		config:      tipos.ConfiguracionS3{Bucket: "test-bucket"},
+		clienteBorde: mockBorde,
+		s3:           mockS3,
+		config:       tipos.ConfiguracionS3{Bucket: "test-bucket"},
 	}
 
 	inicio := time.Unix(0, 0)
@@ -2574,62 +2574,62 @@ func TestCalcularAgregacionSimple_TipoInvalido(t *testing.T) {
 // TESTS DE WILDCARDS
 // ============================================================================
 
-// TestMatchPath_Exacto verifica matching exacto sin wildcard
-func TestMatchPath_Exacto(t *testing.T) {
-	assert.True(t, tipos.MatchPath("sensor_01/temp", "sensor_01/temp"))
-	assert.False(t, tipos.MatchPath("sensor_01/temp", "sensor_02/temp"))
-	assert.False(t, tipos.MatchPath("sensor_01/temp", "sensor_01/humidity"))
-	t.Log("tipos.MatchPath funciona correctamente con path exacto")
+// TestCoincidePath_Exacto verifica matching exacto sin wildcard
+func TestCoincidePath_Exacto(t *testing.T) {
+	assert.True(t, tipos.CoincidePath("sensor_01/temp", "sensor_01/temp"))
+	assert.False(t, tipos.CoincidePath("sensor_01/temp", "sensor_02/temp"))
+	assert.False(t, tipos.CoincidePath("sensor_01/temp", "sensor_01/humidity"))
+	t.Log("tipos.CoincidePath funciona correctamente con path exacto")
 }
 
-// TestMatchPath_WildcardGlobal verifica patron "*" que coincide con todo
-func TestMatchPath_WildcardGlobal(t *testing.T) {
-	assert.True(t, tipos.MatchPath("sensor_01/temp", "*"))
-	assert.True(t, tipos.MatchPath("cualquier/cosa", "*"))
-	assert.True(t, tipos.MatchPath("a", "*"))
-	t.Log("tipos.MatchPath con '*' coincide con cualquier path")
+// TestCoincidePath_WildcardGlobal verifica patron "*" que coincide con todo
+func TestCoincidePath_WildcardGlobal(t *testing.T) {
+	assert.True(t, tipos.CoincidePath("sensor_01/temp", "*"))
+	assert.True(t, tipos.CoincidePath("cualquier/cosa", "*"))
+	assert.True(t, tipos.CoincidePath("a", "*"))
+	t.Log("tipos.CoincidePath con '*' coincide con cualquier path")
 }
 
-// TestMatchPath_WildcardInicio verifica wildcard al inicio del patron
-func TestMatchPath_WildcardInicio(t *testing.T) {
-	assert.True(t, tipos.MatchPath("sensor_01/temp", "*/temp"))
-	assert.True(t, tipos.MatchPath("sensor_02/temp", "*/temp"))
-	assert.True(t, tipos.MatchPath("cualquier/temp", "*/temp"))
-	assert.False(t, tipos.MatchPath("sensor_01/humidity", "*/temp"))
-	t.Log("tipos.MatchPath con wildcard al inicio funciona correctamente")
+// TestCoincidePath_WildcardInicio verifica wildcard al inicio del patron
+func TestCoincidePath_WildcardInicio(t *testing.T) {
+	assert.True(t, tipos.CoincidePath("sensor_01/temp", "*/temp"))
+	assert.True(t, tipos.CoincidePath("sensor_02/temp", "*/temp"))
+	assert.True(t, tipos.CoincidePath("cualquier/temp", "*/temp"))
+	assert.False(t, tipos.CoincidePath("sensor_01/humidity", "*/temp"))
+	t.Log("tipos.CoincidePath con wildcard al inicio funciona correctamente")
 }
 
-// TestMatchPath_WildcardFin verifica wildcard al final del patron
-func TestMatchPath_WildcardFin(t *testing.T) {
-	assert.True(t, tipos.MatchPath("sensor_01/temp", "sensor_01/*"))
-	assert.True(t, tipos.MatchPath("sensor_01/humidity", "sensor_01/*"))
-	assert.False(t, tipos.MatchPath("sensor_02/temp", "sensor_01/*"))
-	t.Log("tipos.MatchPath con wildcard al final funciona correctamente")
+// TestCoincidePath_WildcardFin verifica wildcard al final del patron
+func TestCoincidePath_WildcardFin(t *testing.T) {
+	assert.True(t, tipos.CoincidePath("sensor_01/temp", "sensor_01/*"))
+	assert.True(t, tipos.CoincidePath("sensor_01/humidity", "sensor_01/*"))
+	assert.False(t, tipos.CoincidePath("sensor_02/temp", "sensor_01/*"))
+	t.Log("tipos.CoincidePath con wildcard al final funciona correctamente")
 }
 
-// TestMatchPath_WildcardMedio verifica wildcard en el medio del patron
-func TestMatchPath_WildcardMedio(t *testing.T) {
-	assert.True(t, tipos.MatchPath("field_01/sensor_01/temp", "field_01/*/temp"))
-	assert.True(t, tipos.MatchPath("field_01/sensor_02/temp", "field_01/*/temp"))
-	assert.False(t, tipos.MatchPath("field_02/sensor_01/temp", "field_01/*/temp"))
-	assert.False(t, tipos.MatchPath("field_01/sensor_01/humidity", "field_01/*/temp"))
-	t.Log("tipos.MatchPath con wildcard en el medio funciona correctamente")
+// TestCoincidePath_WildcardMedio verifica wildcard en el medio del patron
+func TestCoincidePath_WildcardMedio(t *testing.T) {
+	assert.True(t, tipos.CoincidePath("field_01/sensor_01/temp", "field_01/*/temp"))
+	assert.True(t, tipos.CoincidePath("field_01/sensor_02/temp", "field_01/*/temp"))
+	assert.False(t, tipos.CoincidePath("field_02/sensor_01/temp", "field_01/*/temp"))
+	assert.False(t, tipos.CoincidePath("field_01/sensor_01/humidity", "field_01/*/temp"))
+	t.Log("tipos.CoincidePath con wildcard en el medio funciona correctamente")
 }
 
-// TestMatchPath_MultipleWildcards verifica multiples wildcards
-func TestMatchPath_MultipleWildcards(t *testing.T) {
-	assert.True(t, tipos.MatchPath("field_01/sensor_01/temp", "*/*/temp"))
-	assert.True(t, tipos.MatchPath("field_02/sensor_02/temp", "*/*/temp"))
-	assert.False(t, tipos.MatchPath("field_01/sensor_01/humidity", "*/*/temp"))
-	t.Log("tipos.MatchPath con multiples wildcards funciona correctamente")
+// TestCoincidePath_MultipleWildcards verifica multiples wildcards
+func TestCoincidePath_MultipleWildcards(t *testing.T) {
+	assert.True(t, tipos.CoincidePath("field_01/sensor_01/temp", "*/*/temp"))
+	assert.True(t, tipos.CoincidePath("field_02/sensor_02/temp", "*/*/temp"))
+	assert.False(t, tipos.CoincidePath("field_01/sensor_01/humidity", "*/*/temp"))
+	t.Log("tipos.CoincidePath con multiples wildcards funciona correctamente")
 }
 
-// TestMatchPath_DiferenteNivelProfundidad verifica que no coincida con diferente profundidad
-func TestMatchPath_DiferenteNivelProfundidad(t *testing.T) {
-	assert.False(t, tipos.MatchPath("sensor_01/temp/interior", "sensor_01/*"))
-	assert.False(t, tipos.MatchPath("sensor_01", "sensor_01/temp"))
-	assert.False(t, tipos.MatchPath("a/b/c", "*/temp"))
-	t.Log("tipos.MatchPath no coincide cuando la profundidad es diferente")
+// TestCoincidePath_DiferenteNivelProfundidad verifica que no coincida con diferente profundidad
+func TestCoincidePath_DiferenteNivelProfundidad(t *testing.T) {
+	assert.False(t, tipos.CoincidePath("sensor_01/temp/interior", "sensor_01/*"))
+	assert.False(t, tipos.CoincidePath("sensor_01", "sensor_01/temp"))
+	assert.False(t, tipos.CoincidePath("a/b/c", "*/temp"))
+	t.Log("tipos.CoincidePath no coincide cuando la profundidad es diferente")
 }
 
 // TestEsPatronWildcard verifica deteccion de wildcards
@@ -2644,7 +2644,7 @@ func TestEsPatronWildcard(t *testing.T) {
 
 // TestBuscarSeriesPorPath_Wildcard_Encontradas verifica busqueda con coincidencias
 func TestBuscarSeriesPorPath_Wildcard_Encontradas(t *testing.T) {
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
 				NodoID:     "nodo1",
@@ -2678,7 +2678,7 @@ func TestBuscarSeriesPorPath_Wildcard_Encontradas(t *testing.T) {
 
 // TestBuscarSeriesPorPath_Wildcard_NoEncontradas verifica error cuando no hay coincidencias
 func TestBuscarSeriesPorPath_Wildcard_NoEncontradas(t *testing.T) {
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
 				NodoID: "nodo1",
@@ -2698,7 +2698,7 @@ func TestBuscarSeriesPorPath_Wildcard_NoEncontradas(t *testing.T) {
 
 // TestBuscarSeriesPorPath_Wildcard_MultiplesNodos verifica busqueda en multiples nodos
 func TestBuscarSeriesPorPath_Wildcard_MultiplesNodos(t *testing.T) {
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
 				NodoID:     "nodo1",
@@ -2740,7 +2740,7 @@ func TestConsultarAgregacion_Wildcard_MultiplesSeries(t *testing.T) {
 	// El mock retorna datos tabulares combinados para ambas series
 	// Tiempo 1000: serie1=10.0, serie2=15.0
 	// Tiempo 2000: serie1=20.0, serie2=25.0
-	mockEdge := &mockClienteEdge{
+	mockBorde := &mockClienteBorde{
 		respuestaRango: &tipos.RespuestaConsultaRango{
 			Resultado: tipos.ResultadoConsultaRango{
 				Series:  []string{"sensor_01/temp", "sensor_02/temp"},
@@ -2756,7 +2756,7 @@ func TestConsultarAgregacion_Wildcard_MultiplesSeries(t *testing.T) {
 		},
 	}
 
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
 				NodoID:     "nodo1",
@@ -2768,9 +2768,9 @@ func TestConsultarAgregacion_Wildcard_MultiplesSeries(t *testing.T) {
 				},
 			},
 		},
-		clienteEdge: mockEdge,
-		s3:          mockS3,
-		config:      tipos.ConfiguracionS3{Bucket: "test-bucket"},
+		clienteBorde: mockBorde,
+		s3:           mockS3,
+		config:       tipos.ConfiguracionS3{Bucket: "test-bucket"},
 	}
 
 	inicio := time.Unix(0, 500)
@@ -2793,7 +2793,7 @@ func TestConsultarAgregacion_Wildcard_MultiplesSeries(t *testing.T) {
 
 // TestConsultarAgregacion_Wildcard_SinCoincidencias verifica error cuando wildcard no coincide
 func TestConsultarAgregacion_Wildcard_SinCoincidencias(t *testing.T) {
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
 				NodoID: "nodo1",
@@ -2817,7 +2817,7 @@ func TestConsultarAgregacion_Wildcard_SinCoincidencias(t *testing.T) {
 // TestConsultarAgregacion_Wildcard_Suma verifica suma con wildcard
 func TestConsultarAgregacion_Wildcard_Suma(t *testing.T) {
 	// El mock retorna datos tabulares combinados para las 3 series (cada una con valor 10)
-	mockEdge := &mockClienteEdge{
+	mockBorde := &mockClienteBorde{
 		respuestaRango: &tipos.RespuestaConsultaRango{
 			Resultado: tipos.ResultadoConsultaRango{
 				Series:  []string{"sensor_01/temp", "sensor_02/temp", "sensor_03/temp"},
@@ -2833,7 +2833,7 @@ func TestConsultarAgregacion_Wildcard_Suma(t *testing.T) {
 		},
 	}
 
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
 				NodoID:     "nodo1",
@@ -2846,9 +2846,9 @@ func TestConsultarAgregacion_Wildcard_Suma(t *testing.T) {
 				},
 			},
 		},
-		clienteEdge: mockEdge,
-		s3:          mockS3,
-		config:      tipos.ConfiguracionS3{Bucket: "test-bucket"},
+		clienteBorde: mockBorde,
+		s3:           mockS3,
+		config:       tipos.ConfiguracionS3{Bucket: "test-bucket"},
 	}
 
 	inicio := time.Unix(0, 0)
@@ -2869,7 +2869,7 @@ func TestConsultarAgregacion_Wildcard_Suma(t *testing.T) {
 // TestConsultarAgregacion_Wildcard_Count verifica count con wildcard
 func TestConsultarAgregacion_Wildcard_Count(t *testing.T) {
 	// 2 series x 2 mediciones = 4 valores totales
-	mockEdge := &mockClienteEdge{
+	mockBorde := &mockClienteBorde{
 		respuestaRango: &tipos.RespuestaConsultaRango{
 			Resultado: tipos.ResultadoConsultaRango{
 				Series:  []string{"sensor_01/temp", "sensor_02/temp"},
@@ -2885,7 +2885,7 @@ func TestConsultarAgregacion_Wildcard_Count(t *testing.T) {
 		},
 	}
 
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
 				NodoID:     "nodo1",
@@ -2897,16 +2897,16 @@ func TestConsultarAgregacion_Wildcard_Count(t *testing.T) {
 				},
 			},
 		},
-		clienteEdge: mockEdge,
-		s3:          mockS3,
-		config:      tipos.ConfiguracionS3{Bucket: "test-bucket"},
+		clienteBorde: mockBorde,
+		s3:           mockS3,
+		config:       tipos.ConfiguracionS3{Bucket: "test-bucket"},
 	}
 
 	inicio := time.Unix(0, 0)
 	fin := time.Unix(0, 3000)
 
 	// 2 series x 2 mediciones = cada serie tiene count = 2
-	resultado, err := m.ConsultarAgregacion("*/temp", inicio, fin, []tipos.TipoAgregacion{tipos.AgregacionCount})
+	resultado, err := m.ConsultarAgregacion("*/temp", inicio, fin, []tipos.TipoAgregacion{tipos.AgregacionConteo})
 
 	assert.NoError(t, err)
 	require.Len(t, resultado.Series, 2)
@@ -2921,7 +2921,7 @@ func TestConsultarAgregacionTemporal_Wildcard(t *testing.T) {
 	// 2 series con datos en tiempos 100 y 500
 	// Tiempo 100: serie1=10.0, serie2=15.0
 	// Tiempo 500: serie1=20.0, serie2=25.0
-	mockEdge := &mockClienteEdge{
+	mockBorde := &mockClienteBorde{
 		respuestaRango: &tipos.RespuestaConsultaRango{
 			Resultado: tipos.ResultadoConsultaRango{
 				Series:  []string{"sensor_01/temp", "sensor_02/temp"},
@@ -2937,7 +2937,7 @@ func TestConsultarAgregacionTemporal_Wildcard(t *testing.T) {
 		},
 	}
 
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
 				NodoID:     "nodo1",
@@ -2949,9 +2949,9 @@ func TestConsultarAgregacionTemporal_Wildcard(t *testing.T) {
 				},
 			},
 		},
-		clienteEdge: mockEdge,
-		s3:          mockS3,
-		config:      tipos.ConfiguracionS3{Bucket: "test-bucket"},
+		clienteBorde: mockBorde,
+		s3:           mockS3,
+		config:       tipos.ConfiguracionS3{Bucket: "test-bucket"},
 	}
 
 	inicio := time.Unix(0, 0)
@@ -2973,7 +2973,7 @@ func TestConsultarAgregacionTemporal_Wildcard(t *testing.T) {
 
 // TestConsultarAgregacionTemporal_Wildcard_SinCoincidencias verifica error con wildcard sin coincidencias
 func TestConsultarAgregacionTemporal_Wildcard_SinCoincidencias(t *testing.T) {
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
 				NodoID: "nodo1",
@@ -2997,7 +2997,7 @@ func TestConsultarAgregacionTemporal_Wildcard_SinCoincidencias(t *testing.T) {
 // TestConsultarAgregacionTemporal_Wildcard_MultipleBuckets verifica multiples buckets con wildcard
 func TestConsultarAgregacionTemporal_Wildcard_MultipleBuckets(t *testing.T) {
 	// 2 series con datos en buckets diferentes
-	mockEdge := &mockClienteEdge{
+	mockBorde := &mockClienteBorde{
 		respuestaRango: &tipos.RespuestaConsultaRango{
 			Resultado: tipos.ResultadoConsultaRango{
 				Series:  []string{"sensor_01/temp", "sensor_02/temp"},
@@ -3013,7 +3013,7 @@ func TestConsultarAgregacionTemporal_Wildcard_MultipleBuckets(t *testing.T) {
 		},
 	}
 
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
 				NodoID:     "nodo1",
@@ -3025,9 +3025,9 @@ func TestConsultarAgregacionTemporal_Wildcard_MultipleBuckets(t *testing.T) {
 				},
 			},
 		},
-		clienteEdge: mockEdge,
-		s3:          mockS3,
-		config:      tipos.ConfiguracionS3{Bucket: "test-bucket"},
+		clienteBorde: mockBorde,
+		s3:           mockS3,
+		config:       tipos.ConfiguracionS3{Bucket: "test-bucket"},
 	}
 
 	inicio := time.Unix(0, 0)
@@ -3067,7 +3067,7 @@ func TestConsultarAgregacion_MultiplesAgregaciones_MinMax(t *testing.T) {
 		{Tiempo: inicio.Add(5 * time.Minute).UnixNano(), Valor: float64(50.0)},
 	}
 
-	mockEdge := &mockClienteEdge{
+	mockBorde := &mockClienteBorde{
 		respuestaRango: crearRespuestaRangoTabular("/sensores/temp", mediciones),
 	}
 
@@ -3077,7 +3077,7 @@ func TestConsultarAgregacion_MultiplesAgregaciones_MinMax(t *testing.T) {
 		},
 	}
 
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
 				NodoID:     "nodo1",
@@ -3088,9 +3088,9 @@ func TestConsultarAgregacion_MultiplesAgregaciones_MinMax(t *testing.T) {
 				},
 			},
 		},
-		clienteEdge: mockEdge,
-		s3:          mockS3,
-		config:      tipos.ConfiguracionS3{Bucket: "test-bucket"},
+		clienteBorde: mockBorde,
+		s3:           mockS3,
+		config:       tipos.ConfiguracionS3{Bucket: "test-bucket"},
 	}
 
 	resultado, err := m.ConsultarAgregacion(
@@ -3121,7 +3121,7 @@ func TestConsultarAgregacion_MultiplesAgregaciones_TodasLasAgregaciones(t *testi
 		{Tiempo: inicio.Add(5 * time.Minute).UnixNano(), Valor: float64(50.0)},
 	}
 
-	mockEdge := &mockClienteEdge{
+	mockBorde := &mockClienteBorde{
 		respuestaRango: crearRespuestaRangoTabular("/sensores/temp", mediciones),
 	}
 
@@ -3131,7 +3131,7 @@ func TestConsultarAgregacion_MultiplesAgregaciones_TodasLasAgregaciones(t *testi
 		},
 	}
 
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
 				NodoID:     "nodo1",
@@ -3142,9 +3142,9 @@ func TestConsultarAgregacion_MultiplesAgregaciones_TodasLasAgregaciones(t *testi
 				},
 			},
 		},
-		clienteEdge: mockEdge,
-		s3:          mockS3,
-		config:      tipos.ConfiguracionS3{Bucket: "test-bucket"},
+		clienteBorde: mockBorde,
+		s3:           mockS3,
+		config:       tipos.ConfiguracionS3{Bucket: "test-bucket"},
 	}
 
 	resultado, err := m.ConsultarAgregacion(
@@ -3155,7 +3155,7 @@ func TestConsultarAgregacion_MultiplesAgregaciones_TodasLasAgregaciones(t *testi
 			tipos.AgregacionMaximo,
 			tipos.AgregacionPromedio,
 			tipos.AgregacionSuma,
-			tipos.AgregacionCount,
+			tipos.AgregacionConteo,
 		},
 	)
 
@@ -3171,7 +3171,7 @@ func TestConsultarAgregacion_MultiplesAgregaciones_TodasLasAgregaciones(t *testi
 
 // TestConsultarAgregacion_MultiplesAgregaciones_SinAgregaciones verifica error sin agregaciones
 func TestConsultarAgregacion_MultiplesAgregaciones_SinAgregaciones(t *testing.T) {
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
 				NodoID: "nodo1",
@@ -3209,7 +3209,7 @@ func TestConsultarAgregacion_MultiplesAgregaciones_Wildcard(t *testing.T) {
 		{float64(20.0), float64(200.0)}, // t2: serie1=20, serie2=200
 	}
 
-	mockEdge := &mockClienteEdge{
+	mockBorde := &mockClienteBorde{
 		respuestaRango: &tipos.RespuestaConsultaRango{
 			Resultado: tipos.ResultadoConsultaRango{
 				Series:  []string{"sensor_01/temp", "sensor_02/temp"},
@@ -3225,7 +3225,7 @@ func TestConsultarAgregacion_MultiplesAgregaciones_Wildcard(t *testing.T) {
 		},
 	}
 
-	m := &ManagerDespachador{
+	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
 				NodoID:     "nodo1",
@@ -3237,9 +3237,9 @@ func TestConsultarAgregacion_MultiplesAgregaciones_Wildcard(t *testing.T) {
 				},
 			},
 		},
-		clienteEdge: mockEdge,
-		s3:          mockS3,
-		config:      tipos.ConfiguracionS3{Bucket: "test-bucket"},
+		clienteBorde: mockBorde,
+		s3:           mockS3,
+		config:       tipos.ConfiguracionS3{Bucket: "test-bucket"},
 	}
 
 	resultado, err := m.ConsultarAgregacion(

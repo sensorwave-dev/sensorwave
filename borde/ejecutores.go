@@ -1,7 +1,7 @@
-// Package edge implementa ejecutores de acciones para el motor de reglas.
+// Package borde implementa ejecutores de acciones para el motor de reglas.
 // Los ejecutores permiten publicar mensajes a través del middleware
 // (MQTT, HTTP, CoAP) cuando se activan las reglas.
-package edge
+package borde
 
 import (
 	"encoding/json"
@@ -23,8 +23,8 @@ type PayloadActuador struct {
 	// Comando es la acción a ejecutar (ej: "encender", "apagar", "ajustar")
 	Comando string `json:"comando"`
 
-	// Timestamp es el momento en que se generó el comando
-	Timestamp time.Time `json:"timestamp"`
+	// MarcaTiempo es el momento en que se generó el comando
+	MarcaTiempo time.Time `json:"timestamp"`
 
 	// ReglaID identifica la regla que generó este comando
 	ReglaID string `json:"regla_id"`
@@ -52,11 +52,11 @@ func ExtraerVariables(plantilla string) []string {
 	matches := variableRegex.FindAllStringSubmatch(plantilla, -1)
 	variables := make([]string, 0, len(matches))
 
-	seen := make(map[string]bool)
+	vistos := make(map[string]bool)
 	for _, match := range matches {
-		if len(match) > 1 && !seen[match[1]] {
+		if len(match) > 1 && !vistos[match[1]] {
 			variables = append(variables, match[1])
-			seen[match[1]] = true
+			vistos[match[1]] = true
 		}
 	}
 
@@ -110,7 +110,7 @@ func ValidarPlantilla(plantilla string) error {
 }
 
 // variablesContexto son las variables que se resuelven desde el contexto de ejecución
-// y no necesitan estar en Params.
+// y no necesitan estar en Parametros.
 var variablesContexto = map[string]bool{
 	"serie":        true,
 	"serie_0":      true,
@@ -171,9 +171,9 @@ func ResolverPlantilla(plantilla string, params map[string]string, regla *Regla,
 	resultado := plantilla
 
 	// 1. Reemplazar variables de params
-	for key, value := range params {
-		placeholder := "{" + key + "}"
-		resultado = strings.ReplaceAll(resultado, placeholder, value)
+	for clave, valor := range params {
+		placeholder := "{" + clave + "}"
+		resultado = strings.ReplaceAll(resultado, placeholder, valor)
 	}
 
 	// 2. Reemplazar variables de contexto
@@ -190,9 +190,9 @@ func ResolverPlantilla(plantilla string, params map[string]string, regla *Regla,
 
 		// Segmentos de la serie: _serie_0, _serie_1, etc.
 		for i := 0; i <= 5; i++ {
-			key := fmt.Sprintf("_serie_%d", i)
+			clave := fmt.Sprintf("_serie_%d", i)
 			placeholder := fmt.Sprintf("{serie_%d}", i)
-			if valor, ok := contexto[key].(string); ok {
+			if valor, ok := contexto[clave].(string); ok {
 				resultado = strings.ReplaceAll(resultado, placeholder, valor)
 			}
 		}
@@ -226,18 +226,18 @@ func CrearEjecutorPublicar(cliente middleware.Cliente) EjecutorAccion {
 		}
 
 		// Resolver el tópico con variables
-		topico := ResolverPlantilla(accion.Destino, accion.Params, regla, valores)
+		topico := ResolverPlantilla(accion.Destino, accion.Parametros, regla, valores)
 		if topico == "" {
 			return fmt.Errorf("tópico resuelto está vacío")
 		}
 
 		// Construir payload
 		payload := PayloadActuador{
-			Comando:    accion.Params["comando"],
-			Timestamp:  time.Now(),
-			ReglaID:    regla.ID,
-			Parametros: filtrarParametrosInternos(accion.Params),
-			Contexto:   filtrarContextoPublico(valores),
+			Comando:     accion.Parametros["comando"],
+			MarcaTiempo: time.Now(),
+			ReglaID:     regla.ID,
+			Parametros:  filtrarParametrosInternos(accion.Parametros),
+			Contexto:    filtrarContextoPublico(valores),
 		}
 
 		// Serializar a JSON
@@ -290,7 +290,7 @@ func filtrarContextoPublico(contexto map[string]interface{}) map[string]interfac
 //
 // Ejemplo:
 //
-//	cliente, err := edge.RegistrarEjecutorMQTT(motor, "publicar_mqtt", "localhost", "1883")
+//	cliente, err := borde.RegistrarEjecutorMQTT(motor, "publicar_mqtt", "localhost", "1883")
 //	if err != nil {
 //	    log.Fatal(err)
 //	}

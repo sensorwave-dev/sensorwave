@@ -37,9 +37,9 @@ type Condicion struct {
 
 // Accion representa una acción de una regla
 type Accion struct {
-	Tipo    string            `json:"tipo"`
-	Destino string            `json:"destino"`
-	Params  map[string]string `json:"params"`
+	Tipo       string            `json:"tipo"`
+	Destino    string            `json:"destino"`
+	Parametros map[string]string `json:"params"`
 }
 
 // Serie representa una serie de datos de tiempo
@@ -54,17 +54,17 @@ type Serie struct {
 	TiempoAlmacenamiento int64                `json:"tiempo_almacenamiento"` // Tiempo máximo de almacenamiento en nanosegundos (0 = sin límite)
 }
 
-// MatchPath verifica si un path coincide con un patrón glob.
+// CoincidePath verifica si un path coincide con un patrón glob.
 // Soporta wildcard '*' que matchea cualquier secuencia de caracteres.
 // Cuando el último segmento del patrón es '*', matchea múltiples niveles.
 // Ejemplos:
-//   - MatchPath("sensor_01/temp", "*/temp") -> true
-//   - MatchPath("sensor_01/temp", "sensor_01/*") -> true
-//   - MatchPath("sensor_01/temp", "*") -> true (caso especial)
-//   - MatchPath("dispositivo1/temp", "dispositivo*/temp") -> true
-//   - MatchPath("nodo/dev/sensor", "nodo/*") -> true (wildcard al final = múltiples niveles)
-//   - MatchPath("dispositivo1/temp/extra", "dispositivo*/*") -> true
-func MatchPath(pathStr, patron string) bool {
+//   - CoincidePath("sensor_01/temp", "*/temp") -> true
+//   - CoincidePath("sensor_01/temp", "sensor_01/*") -> true
+//   - CoincidePath("sensor_01/temp", "*") -> true (caso especial)
+//   - CoincidePath("dispositivo1/temp", "dispositivo*/temp") -> true
+//   - CoincidePath("nodo/dev/sensor", "nodo/*") -> true (wildcard al final = múltiples niveles)
+//   - CoincidePath("dispositivo1/temp/extra", "dispositivo*/*") -> true
+func CoincidePath(pathStr, patron string) bool {
 	if patron == "*" {
 		return true
 	}

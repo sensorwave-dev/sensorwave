@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/sensorwave-dev/sensorwave/middleware"
-	"github.com/sensorwave-dev/sensorwave/middleware/internal/mensaje"
 )
 
 type ClienteHTTP struct {
@@ -27,9 +26,16 @@ type ClienteHTTP struct {
 var ruta string = "/sensorwave"
 
 const (
-	ackTimeout      = 2 * time.Second
-	ackRandomFactor = 1.5
-	maxRetransmit   = 4
+	ackTimeout         = 2 * time.Second
+	factorAleatorioAck = 1.5
+	maxRetransmisiones = 4
+)
+
+// Constantes de reconexión SSE
+const (
+	maxIntentosReconexion = 5
+	backoffInicial        = 1 * time.Second
+	backoffFactor         = 2
 )
 
 // NuevoClienteHTTP crea un nuevo cliente HTTP
@@ -42,15 +48,17 @@ func Conectar(host string, puerto string) *ClienteHTTP {
 
 // Publicar realiza un POST al servidor HTTP
 func (c *ClienteHTTP) Publicar(topico string, payload interface{}, opciones ...middleware.PublicarOpcion) {
-	mensaje, err := mensaje.Construir(topico, payload, opciones...)
+	mensaje, err := middleware.Construir(topico, payload, opciones...)
 	if err != nil {
-		log.Fatalf("Error al construir mensaje: %v", err)
+		log.Printf("Error al construir mensaje: %v", err)
+		return
 	}
 
 	// Serializar el mensaje a JSON
 	mensajeBytes, err := json.Marshal(mensaje)
 	if err != nil {
-		log.Fatalf("Error al serializar el mensaje: %v", err)
+		log.Printf("Error al serializar el mensaje: %v", err)
+		return
 	}
 
 	url := fmt.Sprintf("%s%s?topico=%s", c.BaseURL, ruta, url.QueryEscape(topico))
@@ -64,98 +72,127 @@ func (c *ClienteHTTP) Publicar(topico string, payload interface{}, opciones ...m
 				resp.Body.Close()
 				if resp.StatusCode == http.StatusOK {
 					var ack struct {
-						MessageID string `json:"messageId"`
+						MensajeID string `json:"mensajeId"`
 					}
-					if json.Unmarshal(body, &ack) == nil && ack.MessageID == mensaje.MessageID {
+					if json.Unmarshal(body, &ack) == nil && ack.MensajeID == mensaje.MensajeID {
 						return
 					}
 				}
 			}
-			if reintentos >= maxRetransmit {
-				log.Fatalf("No se recibió ACK para messageId %s", mensaje.MessageID)
+			if reintentos >= maxRetransmisiones {
+				log.Printf("No se recibió ACK para mensajeId %s después de %d intentos", mensaje.MensajeID, maxRetransmisiones)
+				return
 			}
 			time.Sleep(delay)
-			delay = time.Duration(float64(delay) * ackRandomFactor)
+			delay = time.Duration(float64(delay) * factorAleatorioAck)
 			reintentos++
 		}
 	}
 
 	resp, err := c.Cliente.Post(url, "application/json", bytes.NewReader(mensajeBytes))
 	if err != nil {
-		log.Fatalf("Error al realizar el POST: %v", err)
+		log.Printf("Error al realizar el POST: %v", err)
+		return
 	}
 	defer resp.Body.Close()
 
 	// Verificar el código de respuesta
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		log.Fatalf("Error en la respuesta del servidor: %s", string(body))
+		log.Printf("Error en la respuesta del servidor: %s", string(body))
 	}
 }
 
 func (c *ClienteHTTP) Suscribir(topico string, callback middleware.CallbackFunc) {
 	go func() {
-		url := fmt.Sprintf("%s%s?topico=%s", c.BaseURL, ruta, url.QueryEscape(topico))
-		resp, err := c.Cliente.Get(url)
-		if err != nil {
-			log.Fatalf("Error al realizar el GET: %v", err)
-		}
-		defer resp.Body.Close()
+		reconexiones := 0
+		delay := backoffInicial
 
-		reader := bufio.NewReader(resp.Body)
-		primerMensaje := true
-
-		for {
-			linea, err := reader.ReadString('\n')
+		for reconexiones < maxIntentosReconexion {
+			url := fmt.Sprintf("%s%s?topico=%s", c.BaseURL, ruta, url.QueryEscape(topico))
+			resp, err := c.Cliente.Get(url)
 			if err != nil {
-				if err == io.EOF {
-					log.Println("Conexión SSE cerrada por el servidor")
-					break
+				reconexiones++
+				if reconexiones >= maxIntentosReconexion {
+					log.Fatalf("Error al conectar SSE después de %d intentos: %v", maxIntentosReconexion, err)
 				}
-				log.Fatalf("Error al leer el flujo SSE: %v", err)
+				log.Printf("Error SSE (intento %d/%d): %v, reintentando en %v...",
+					reconexiones, maxIntentosReconexion, err, delay)
+				time.Sleep(delay)
+				delay *= backoffFactor
+				continue
 			}
 
-			if strings.HasPrefix(linea, "data: ") {
-				datos := strings.TrimPrefix(linea, "data: ")
-				datos = strings.TrimSpace(datos)
+			// Conexión exitosa: resetear contadores
+			reconexiones = 0
+			delay = backoffInicial
 
-				if primerMensaje {
-					var msg map[string]string
-					if err := json.Unmarshal([]byte(datos), &msg); err == nil {
-						if id, ok := msg["clienteID"]; ok {
-							c.mu.Lock()
-							c.clienteID = id
-							c.mu.Unlock()
-							primerMensaje = false
-							continue
-						}
+			// Lee el stream SSE
+			reader := bufio.NewReader(resp.Body)
+			primerMensaje := true
+			sseError := false
+
+			for {
+				linea, err := reader.ReadString('\n')
+				if err != nil {
+					resp.Body.Close()
+					if err == io.EOF {
+						log.Printf("Conexión SSE cerrada por el servidor, reconectando...")
+					} else {
+						log.Printf("Error al leer el flujo SSE: %v, reconectando...", err)
 					}
+					sseError = true
+					break
 				}
 
-				var payloadStr string
-				if strings.HasPrefix(datos, "{") {
-					var msg struct {
-						MessageID string `json:"messageId"`
+				if strings.HasPrefix(linea, "data: ") {
+					datos := strings.TrimPrefix(linea, "data: ")
+					datos = strings.TrimSpace(datos)
+
+					// Procesar el primer mensaje para obtener el clienteID
+					var msjClienteID map[string]string
+					if primerMensaje {
+						if err := json.Unmarshal([]byte(datos), &msjClienteID); err == nil {
+							if id, ok := msjClienteID["clienteID"]; ok {
+								c.mu.Lock()
+								c.clienteID = id
+								c.mu.Unlock()
+								primerMensaje = false
+								continue
+							}
+						}
+					}
+
+					var msjDatos struct {
+						MensajeID string `json:"mensajeId,omitempty"`
 						QoS       int    `json:"qos"`
-						Payload   string `json:"payload"`
+						Topico    string `json:"topico"`
+						Payload   []byte `json:"payload"`
 					}
-					if err := json.Unmarshal([]byte(datos), &msg); err == nil {
-						payloadStr = msg.Payload
-						if msg.QoS == 1 && msg.MessageID != "" {
-							c.enviarAck(msg.MessageID)
+					if err := json.Unmarshal([]byte(datos), &msjDatos); err == nil {
+						if msjDatos.QoS == 1 && msjDatos.MensajeID != "" {
+							c.enviarAck(msjDatos.MensajeID)
 						}
 					}
+					callback(msjDatos.Topico, msjDatos.Payload)
 				}
-				if payloadStr == "" {
-					payloadStr = datos
+			}
+
+			if sseError {
+				reconexiones++
+				if reconexiones >= maxIntentosReconexion {
+					log.Fatalf("Máximo de reconexiones SSE alcanzado (%d)", maxIntentosReconexion)
 				}
-				callback(topico, payloadStr)
+				log.Printf("Reconectando SSE (intento %d/%d) en %v...",
+					reconexiones, maxIntentosReconexion, delay)
+				time.Sleep(delay)
+				delay *= backoffFactor
 			}
 		}
 	}()
 }
 
-func (c *ClienteHTTP) enviarAck(messageID string) {
+func (c *ClienteHTTP) enviarAck(MensajeID string) {
 	c.mu.Lock()
 	clienteID := c.clienteID
 	c.mu.Unlock()
@@ -166,7 +203,7 @@ func (c *ClienteHTTP) enviarAck(messageID string) {
 
 	body, err := json.Marshal(map[string]string{
 		"clienteId": clienteID,
-		"messageId": messageID,
+		"mensajeId": MensajeID,
 	})
 	if err != nil {
 		return
@@ -186,26 +223,26 @@ func (c *ClienteHTTP) Desuscribir(topico string) {
 	c.mu.Unlock()
 
 	if clienteID == "" {
-		log.Println("No hay clienteID disponible, no se puede desuscribir")
 		return
 	}
 
 	url := fmt.Sprintf("%s%s?topico=%s&clienteID=%s", c.BaseURL, ruta, url.QueryEscape(topico), url.QueryEscape(clienteID))
 	req, err := http.NewRequest("DELETE", url, nil)
 	if err != nil {
-		log.Fatalf("Error al crear la solicitud DELETE: %v", err)
+		log.Printf("Error al crear la solicitud DELETE: %v", err)
+		return
 	}
 	resp, err := c.Cliente.Do(req)
 	if err != nil {
-		log.Fatalf("Error al realizar la solicitud DELETE: %v", err)
+		log.Printf("Error al realizar la solicitud DELETE: %v", err)
+		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		log.Fatalf("Error en la respuesta del servidor: %s", string(body))
+		log.Printf("Error en la respuesta del servidor: %s", string(body))
 	}
-	fmt.Println("Desuscrito del tópico:", topico)
 }
 
 // Desconectar cierra las conexiones del cliente HTTP
@@ -215,5 +252,4 @@ func (c *ClienteHTTP) Desconectar() {
 			transporte.CloseIdleConnections()
 		}
 	}
-	fmt.Println("Cliente HTTP desconectado")
 }

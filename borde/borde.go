@@ -1,4 +1,4 @@
-package edge
+package borde
 
 import (
 	"encoding/binary"
@@ -14,8 +14,8 @@ import (
 	"github.com/sensorwave-dev/sensorwave/tipos"
 )
 
-type ManagerEdge struct {
-	nodoID        string            // ID único del nodo edge
+type GestorBorde struct {
+	nodoID        string            // ID único del nodo borde
 	direccion     string            // dirección pública para uso de API REST
 	puertoHTTP    string            // Puerto HTTP para la API REST
 	tags          map[string]string // Metadatos libres del nodo (nombre, ubicación, etc.)
@@ -27,7 +27,7 @@ type ManagerEdge struct {
 	MotorReglas   *MotorReglas      // Motor de reglas integrado
 	tamañoBuffer  int               // Tamaño del buffer de canales (default 1000)
 	timeoutBuffer int64             // Timeout para inserción en nanosegundos (default 100ms)
-	done          chan struct{}     // Canal para señalizar cierre del manager
+	finalizado    chan struct{}     // Canal para señalizar cierre del gestor
 }
 
 type Cache struct {
@@ -35,16 +35,16 @@ type Cache struct {
 	mu    sync.RWMutex           // Mutex para proteger el acceso concurrente
 }
 
-type SerieBuffer struct {
+type BufferSerie struct {
 	datos      []tipos.Medicion    // Arreglo con TamañoBloque elementos
 	serie      tipos.Serie         // Configuración de la serie
 	indice     int                 // Índice actual en el buffer
 	mu         sync.Mutex          // Mutex para proteger el buffer
-	done       chan struct{}       // Canal para señalar cierre del hilo
+	finalizado chan struct{}       // Canal para señalar cierre del hilo
 	datosCanal chan tipos.Medicion // Canal para recibir nuevos datos
 }
 
-// Opciones configura la creación de un ManagerEdge.
+// Opciones configura la creación de un GestorBorde.
 // ConfigS3 es opcional (nil = modo desconectado sin sincronización con nube).
 type Opciones struct {
 	NombreDB      string                 // Nombre de la base de datos Pebble (requerido)
@@ -56,19 +56,19 @@ type Opciones struct {
 	Tags          map[string]string      // Metadatos libres del nodo (nombre, ubicación, etc.)
 }
 
-// Crear inicializa el ManagerEdge con las opciones especificadas.
+// Crear inicializa el GestorBorde con las opciones especificadas.
 // ConfigS3 es opcional: si es nil, funciona en modo local sin registro en nube.
 // Si se proporciona, debe ser una configuración completa y válida.
-func Crear(opts Opciones) (*ManagerEdge, error) {
+func Crear(opts Opciones) (*GestorBorde, error) {
 
 	// Validar opciones requeridas
 	if opts.NombreDB == "" {
-		return &ManagerEdge{}, fmt.Errorf("NombreDB es requerido")
+		return &GestorBorde{}, fmt.Errorf("NombreDB es requerido")
 	}
 
 	// Validar opts.Dirección pública no sea vacía
 	if opts.Direccion == "" {
-		return &ManagerEdge{}, fmt.Errorf("Dirección es requerida")
+		return &GestorBorde{}, fmt.Errorf("Dirección es requerida")
 	}
 
 	// Validar puerto HTTP según configuración de S3
@@ -77,16 +77,16 @@ func Crear(opts Opciones) (*ManagerEdge, error) {
 	if opts.ConfigS3 != nil {
 		// Con S3: puerto HTTP es requerido
 		if opts.PuertoHTTP == "" {
-			return &ManagerEdge{}, fmt.Errorf("PuertoHTTP es requerido cuando ConfigS3 está configurado")
+			return &GestorBorde{}, fmt.Errorf("PuertoHTTP es requerido cuando ConfigS3 está configurado")
 		}
 		puertoHTTP, err = validarPuertoHTTP(opts.PuertoHTTP)
 		if err != nil {
-			return &ManagerEdge{}, err
+			return &GestorBorde{}, err
 		}
 	} else {
 		// Sin S3: puerto HTTP no debe especificarse
 		if opts.PuertoHTTP != "" {
-			return &ManagerEdge{}, fmt.Errorf("PuertoHTTP no debe especificarse sin ConfigS3 (no tiene sentido exponer HTTP sin registro en nube)")
+			return &GestorBorde{}, fmt.Errorf("PuertoHTTP no debe especificarse sin ConfigS3 (no tiene sentido exponer HTTP sin registro en nube)")
 		}
 	}
 
@@ -104,17 +104,17 @@ func Crear(opts Opciones) (*ManagerEdge, error) {
 	// Abrir o crear la base de datos Pebble local
 	db, err := pebble.Open(opts.NombreDB, &pebble.Options{})
 	if err != nil {
-		return &ManagerEdge{}, err
+		return &GestorBorde{}, err
 	}
 
-	// Inicializar el ManagerEdge (datos básicos)
-	manager := &ManagerEdge{
+	// Inicializar el GestorBorde (datos básicos)
+	gestor := &GestorBorde{
 		db:            db,
 		direccion:     opts.Direccion,
 		puertoHTTP:    puertoHTTP,
 		tags:          opts.Tags,
 		cache:         &Cache{datos: make(map[string]tipos.Serie)},
-		done:          make(chan struct{}),
+		finalizado:    make(chan struct{}),
 		contador:      0,
 		tamañoBuffer:  tamañoBuffer,
 		timeoutBuffer: timeoutBuffer,
@@ -124,20 +124,20 @@ func Crear(opts Opciones) (*ManagerEdge, error) {
 	nodoIDBytes, closer, err := db.Get([]byte("meta/nodo_id"))
 	// Si no existe, generar uno nuevo
 	if err == pebble.ErrNotFound {
-		manager.nodoID = generarNodoID()
-		err = db.Set([]byte("meta/nodo_id"), []byte(manager.nodoID), pebble.Sync)
+		gestor.nodoID = generarNodoID()
+		err = db.Set([]byte("meta/nodo_id"), []byte(gestor.nodoID), pebble.Sync)
 		if err != nil {
-			return &ManagerEdge{}, fmt.Errorf("error al guardar nodo_id: %v", err)
+			return &GestorBorde{}, fmt.Errorf("error al guardar nodo_id: %v", err)
 		}
-		log.Printf("Nuevo nodoID generado: %s", manager.nodoID)
+		log.Printf("Nuevo nodoID generado: %s", gestor.nodoID)
 	} else if err != nil {
 		// Error al leer nodoID existente
-		return &ManagerEdge{}, fmt.Errorf("error al leer nodo_id: %v", err)
+		return &GestorBorde{}, fmt.Errorf("error al leer nodo_id: %v", err)
 	} else {
 		// Cargar nodoID existente
-		manager.nodoID = string(nodoIDBytes)
+		gestor.nodoID = string(nodoIDBytes)
 		closer.Close()
-		log.Printf("NodoID cargado desde DB: %s", manager.nodoID)
+		log.Printf("NodoID cargado desde DB: %s", gestor.nodoID)
 	}
 
 	// Cargar o actualizar tags del nodo
@@ -146,13 +146,13 @@ func Crear(opts Opciones) (*ManagerEdge, error) {
 		// Guardar los nuevos tags
 		tagsBytes, err := tipos.SerializarGob(opts.Tags)
 		if err != nil {
-			return &ManagerEdge{}, fmt.Errorf("error al serializar tags: %v", err)
+			return &GestorBorde{}, fmt.Errorf("error al serializar tags: %v", err)
 		}
 		err = db.Set([]byte("meta/tags"), tagsBytes, pebble.Sync)
 		if err != nil {
-			return &ManagerEdge{}, fmt.Errorf("error al guardar tags: %v", err)
+			return &GestorBorde{}, fmt.Errorf("error al guardar tags: %v", err)
 		}
-		manager.tags = opts.Tags
+		gestor.tags = opts.Tags
 		log.Printf("Tags actualizados: %v", opts.Tags)
 	} else {
 		// Cargar tags existentes desde PebbleDB
@@ -160,33 +160,33 @@ func Crear(opts Opciones) (*ManagerEdge, error) {
 		if err == nil {
 			var tagsGuardados map[string]string
 			if err := tipos.DeserializarGob(tagsBytes, &tagsGuardados); err == nil {
-				manager.tags = tagsGuardados
+				gestor.tags = tagsGuardados
 				log.Printf("Tags cargados desde DB: %v", tagsGuardados)
 			}
 			closer.Close()
 		} else if err != pebble.ErrNotFound {
-			return &ManagerEdge{}, fmt.Errorf("error al leer tags: %v", err)
+			return &GestorBorde{}, fmt.Errorf("error al leer tags: %v", err)
 		}
-		// Si no hay tags guardados, manager.tags queda nil (ya asignado arriba)
+		// Si no hay tags guardados, gestor.tags queda nil (ya asignado arriba)
 	}
 
 	// Cargar contador de series desde PebbleDB
 	contadorBytes, closer, err := db.Get([]byte("meta/contador"))
 	if err != nil && err != pebble.ErrNotFound {
-		return &ManagerEdge{}, fmt.Errorf("error al leer contador: %v", err)
+		return &GestorBorde{}, fmt.Errorf("error al leer contador: %v", err)
 	}
 	if err == nil {
 		// Cargar contador existente
 		if len(contadorBytes) >= 4 {
-			manager.contador = int(binary.LittleEndian.Uint32(contadorBytes))
+			gestor.contador = int(binary.LittleEndian.Uint32(contadorBytes))
 		}
 		closer.Close()
 	}
 
 	// Cargar series existentes desde PebbleDB
-	err = manager.cargarSeriesExistentes()
+	err = gestor.cargarSeriesExistentes()
 	if err != nil {
-		return &ManagerEdge{}, fmt.Errorf("error al cargar series: %v", err)
+		return &GestorBorde{}, fmt.Errorf("error al cargar series: %v", err)
 	}
 
 	// Configurar S3 si se proporciona configuración
@@ -194,10 +194,10 @@ func Crear(opts Opciones) (*ManagerEdge, error) {
 		// Aplicar defaults y validar
 		opts.ConfigS3.AplicarDefaults()
 		if err := opts.ConfigS3.Validar(); err != nil {
-			return &ManagerEdge{}, fmt.Errorf("configuración S3 inválida: %w", err)
+			return &GestorBorde{}, fmt.Errorf("configuración S3 inválida: %w", err)
 		}
 
-		err = manager.ConfigurarS3(*opts.ConfigS3)
+		err = gestor.ConfigurarS3(*opts.ConfigS3)
 		if err != nil {
 			log.Printf("Advertencia: error al configurar S3: %v", err)
 			log.Printf("El nodo funcionará en modo local")
@@ -207,44 +207,44 @@ func Crear(opts Opciones) (*ManagerEdge, error) {
 	}
 
 	// Inicializar el motor de reglas integrado
-	manager.MotorReglas = nuevoMotorReglasIntegrado(manager, db)
+	gestor.MotorReglas = nuevoMotorReglasIntegrado(gestor, db)
 	// Cargar reglas existentes
-	err = manager.MotorReglas.cargarReglasExistentes()
+	err = gestor.MotorReglas.cargarReglasExistentes()
 	if err != nil {
-		return &ManagerEdge{}, fmt.Errorf("error al cargar reglas: %v", err)
+		return &GestorBorde{}, fmt.Errorf("error al cargar reglas: %v", err)
 	}
 
 	// Si S3 está configurado y se pudo conectar, registrar el nodo (incluye reglas)
 	if clienteS3 != nil {
-		if err := manager.RegistrarEnS3(); err != nil {
+		if err := gestor.RegistrarEnS3(); err != nil {
 			log.Printf("Advertencia: error registrando nodo en S3: %v", err)
 		}
 		// Iniciar limpieza automática de S3 (eliminaciones pendientes)
-		manager.IniciarLimpiezaS3Automatica()
+		gestor.IniciarLimpiezaS3Automatica()
 	}
 
 	// Iniciar servidor HTTP solo si hay puerto configurado (modo conectado con S3)
 	if puertoHTTP != "" {
-		listoHTTP := manager.iniciarServidorHTTP()
+		listoHTTP := gestor.iniciarServidorHTTP()
 		<-listoHTTP
 	}
 
-	return manager, nil
+	return gestor, nil
 }
 
-// ObtenerNodeID retorna el ID del nodo edge
-func (me *ManagerEdge) ObtenerNodoID() string {
+// ObtenerNodeID retorna el ID del nodo borde
+func (me *GestorBorde) ObtenerNodoID() string {
 	return me.nodoID
 }
 
-// ObtenerTags retorna los tags del nodo edge
-func (me *ManagerEdge) ObtenerTags() map[string]string {
+// ObtenerTags retorna los tags del nodo borde
+func (me *GestorBorde) ObtenerTags() map[string]string {
 	return me.tags
 }
 
 // ActualizarTags actualiza los tags del nodo y los persiste en PebbleDB.
 // Si tags es nil, elimina todos los tags guardados.
-func (me *ManagerEdge) ActualizarTags(tags map[string]string) error {
+func (me *GestorBorde) ActualizarTags(tags map[string]string) error {
 	if tags == nil {
 		// Eliminar tags de PebbleDB
 		err := me.db.Delete([]byte("meta/tags"), pebble.Sync)
@@ -278,7 +278,7 @@ func (me *ManagerEdge) ActualizarTags(tags map[string]string) error {
 }
 
 // cargarSeriesExistentes carga todas las series desde PebbleDB al cache
-func (me *ManagerEdge) cargarSeriesExistentes() error {
+func (me *GestorBorde) cargarSeriesExistentes() error {
 	iter, err := me.db.NewIter(&pebble.IterOptions{
 		LowerBound: []byte("series/"),
 		UpperBound: []byte("series0"), // Rango que incluye todas las claves "series/*"
@@ -289,13 +289,13 @@ func (me *ManagerEdge) cargarSeriesExistentes() error {
 	defer iter.Close()
 
 	for iter.First(); iter.Valid(); iter.Next() {
-		key := string(iter.Key())
-		if !strings.HasPrefix(key, "series/") {
+		clave := string(iter.Key())
+		if !strings.HasPrefix(clave, "series/") {
 			continue
 		}
 
 		// Extraer path de la clave
-		seriesPath := strings.TrimPrefix(key, "series/")
+		seriesPath := strings.TrimPrefix(clave, "series/")
 		if seriesPath == "" {
 			continue
 		}
@@ -317,11 +317,11 @@ func (me *ManagerEdge) cargarSeriesExistentes() error {
 		me.cache.mu.Unlock()
 
 		// Crear buffer y goroutine para cada serie
-		serieBuffer := &SerieBuffer{
+		serieBuffer := &BufferSerie{
 			datos:      make([]tipos.Medicion, config.TamañoBloque),
 			serie:      config,
 			indice:     0,
-			done:       make(chan struct{}),
+			finalizado: make(chan struct{}),
 			datosCanal: make(chan tipos.Medicion, me.tamañoBuffer),
 		}
 
@@ -333,14 +333,14 @@ func (me *ManagerEdge) cargarSeriesExistentes() error {
 }
 
 // Cerrar cierra la conexión a PebbleDB y todos los goroutines asociados
-func (me *ManagerEdge) Cerrar() {
+func (me *GestorBorde) Cerrar() {
 	// Señalar a todos los goroutines que deben terminar
-	close(me.done)
+	close(me.finalizado)
 
 	// Cerrar todos los buffers individuales
-	me.buffers.Range(func(key, value interface{}) bool {
-		buffer := value.(*SerieBuffer)
-		close(buffer.done)
+	me.buffers.Range(func(clave, valor interface{}) bool {
+		buffer := valor.(*BufferSerie)
+		close(buffer.finalizado)
 		return true
 	})
 
@@ -349,7 +349,7 @@ func (me *ManagerEdge) Cerrar() {
 }
 
 // CrearSerie crea una nueva serie si no existe. Si ya existe, no hace nada.
-func (me *ManagerEdge) CrearSerie(config tipos.Serie) error {
+func (me *GestorBorde) CrearSerie(config tipos.Serie) error {
 	// Validar campos obligatorios
 	if config.Path == "" {
 		return fmt.Errorf("el path de la serie no puede estar vacío")
@@ -456,11 +456,11 @@ func (me *ManagerEdge) CrearSerie(config tipos.Serie) error {
 	me.cache.mu.Unlock()
 
 	// Crear buffer y goroutine para la nueva serie
-	buffer := &SerieBuffer{
+	buffer := &BufferSerie{
 		datos:      make([]tipos.Medicion, config.TamañoBloque),
 		serie:      config,
 		indice:     0,
-		done:       make(chan struct{}),
+		finalizado: make(chan struct{}),
 		datosCanal: make(chan tipos.Medicion, me.tamañoBuffer),
 	}
 
@@ -479,12 +479,12 @@ func (me *ManagerEdge) CrearSerie(config tipos.Serie) error {
 }
 
 // manejarBuffer maneja la inserción y almacenamiento de datos en el buffer de una serie
-func (me *ManagerEdge) manejarBuffer(buffer *SerieBuffer) {
+func (me *GestorBorde) manejarBuffer(buffer *BufferSerie) {
 	for {
 		select {
-		case <-buffer.done:
+		case <-buffer.finalizado:
 			return
-		case <-me.done:
+		case <-me.finalizado:
 			return
 		case medicion := <-buffer.datosCanal:
 			buffer.mu.Lock()
@@ -509,14 +509,14 @@ func (me *ManagerEdge) manejarBuffer(buffer *SerieBuffer) {
 }
 
 // Insertar agrega un nuevo dato a la serie especificada
-func (me *ManagerEdge) Insertar(path string, tiempo int64, dato interface{}) error {
+func (me *GestorBorde) Insertar(path string, tiempo int64, dato interface{}) error {
 	// Obtener el buffer para la serie
 	bufferInterface, ok := me.buffers.Load(path)
 	if !ok {
 		return fmt.Errorf("serie no encontrada: %s", path)
 	}
 
-	buffer := bufferInterface.(*SerieBuffer)
+	buffer := bufferInterface.(*BufferSerie)
 
 	// Validar compatibilidad de tipo
 	if !esCompatibleConTipo(dato, buffer.serie.TipoDatos) {
@@ -543,11 +543,11 @@ func (me *ManagerEdge) Insertar(path string, tiempo int64, dato interface{}) err
 }
 
 // descomprimirBloque descomprime un bloque de datos usando la función pública del compresor
-func (me *ManagerEdge) descomprimirBloque(datosComprimidos []byte, serie tipos.Serie) ([]tipos.Medicion, error) {
+func (me *GestorBorde) descomprimirBloque(datosComprimidos []byte, serie tipos.Serie) ([]tipos.Medicion, error) {
 	return compresor.DescomprimirBloqueSerie(datosComprimidos, serie.TipoDatos, serie.CompresionBytes, serie.CompresionBloque)
 }
 
-func (me *ManagerEdge) comprimirYAlmacenar(buffer *SerieBuffer) {
+func (me *GestorBorde) comprimirYAlmacenar(buffer *BufferSerie) {
 	// Obtener mediciones válidas del buffer
 	mediciones := buffer.datos[:buffer.indice]
 	if len(mediciones) == 0 {
@@ -691,39 +691,43 @@ func (me *ManagerEdge) comprimirYAlmacenar(buffer *SerieBuffer) {
 		"Tamaño comprimido:", len(bloqueFinal))
 
 	// Escribir directamente a PebbleDB (sin serialización)
-	key := generarClaveDatos(buffer.serie.SerieId, tiempoInicio, tiempoFinal)
-	err = me.db.Set(key, bloqueFinal, pebble.Sync)
+	clave := generarClaveDatos(buffer.serie.SerieId, tiempoInicio, tiempoFinal)
+	err = me.db.Set(clave, bloqueFinal, pebble.Sync)
 	if err != nil {
 		fmt.Printf("Error al escribir datos para serie %s: %v\n", buffer.serie.Path, err)
 	}
 }
 
-func (me *ManagerEdge) AgregarRegla(regla *Regla) error {
+func (me *GestorBorde) AgregarRegla(regla *Regla) error {
 	return me.MotorReglas.AgregarRegla(regla)
 }
 
-func (me *ManagerEdge) EliminarRegla(id string) error {
+func (me *GestorBorde) EliminarRegla(id string) error {
 	return me.MotorReglas.EliminarRegla(id)
 }
 
-func (me *ManagerEdge) ActualizarRegla(regla *Regla) error {
+func (me *GestorBorde) ActualizarRegla(regla *Regla) error {
 	return me.MotorReglas.ActualizarRegla(regla)
 }
 
-func (me *ManagerEdge) RegistrarEjecutor(tipoAccion string, ejecutor EjecutorAccion) error {
+func (me *GestorBorde) HabilitarRegla(id string, habilitada bool) error {
+	return me.MotorReglas.HabilitarRegla(id, habilitada)
+}
+
+func (me *GestorBorde) RegistrarEjecutor(tipoAccion string, ejecutor EjecutorAccion) error {
 	return me.MotorReglas.RegistrarEjecutor(tipoAccion, ejecutor)
 }
 
-func (me *ManagerEdge) ListarReglas() map[string]*Regla {
+func (me *GestorBorde) ListarReglas() map[string]*Regla {
 	return me.MotorReglas.ListarReglas()
 }
 
-func (me *ManagerEdge) HabilitarMotorReglas(habilitado bool) {
+func (me *GestorBorde) HabilitarMotorReglas(habilitado bool) {
 	me.MotorReglas.Habilitar(habilitado)
 }
 
 // ObtenerEstadoMotorReglas devuelve el estado actual del motor de reglas
-func (me *ManagerEdge) ObtenerEstadoMotorReglas() EstadoMotorReglas {
+func (me *GestorBorde) ObtenerEstadoMotorReglas() EstadoMotorReglas {
 	return me.MotorReglas.ObtenerEstado()
 }
 
@@ -731,7 +735,7 @@ func (me *ManagerEdge) ObtenerEstadoMotorReglas() EstadoMotorReglas {
 // Elimina: metadatos, bloques de datos locales, cache y buffer.
 // Si S3 está configurado, registra la eliminación pendiente y la procesa (best-effort).
 // La eliminación local siempre se completa; la eliminación de S3 se reintentará automáticamente.
-func (me *ManagerEdge) EliminarSerie(path string) error {
+func (me *GestorBorde) EliminarSerie(path string) error {
 	// Verificar que la serie existe
 	me.cache.mu.RLock()
 	serie, existe := me.cache.datos[path]
@@ -754,10 +758,10 @@ func (me *ManagerEdge) EliminarSerie(path string) error {
 
 	// 2. Cerrar el buffer y su goroutine
 	if bufferInterface, ok := me.buffers.Load(path); ok {
-		buffer := bufferInterface.(*SerieBuffer)
+		buffer := bufferInterface.(*BufferSerie)
 
 		// Señalar al goroutine que termine
-		close(buffer.done)
+		close(buffer.finalizado)
 
 		// Vaciar el canal para evitar bloqueos
 		close(buffer.datosCanal)

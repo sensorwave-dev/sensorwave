@@ -1,4 +1,4 @@
-package edge
+package borde
 
 import (
 	"bytes"
@@ -21,7 +21,7 @@ import (
 // - El nodo se crea por primera vez (en Crear)
 // - Se agrega una nueva serie (en CrearSerie)
 // - Se modifica una regla (en AgregarRegla, ActualizarRegla, EliminarRegla)
-func (me *ManagerEdge) RegistrarEnS3() error {
+func (me *GestorBorde) RegistrarEnS3() error {
 	// Verificar que S3 esté configurado
 	if clienteS3 == nil {
 		return fmt.Errorf("S3 no está configurado")
@@ -56,9 +56,9 @@ func (me *ManagerEdge) RegistrarEnS3() error {
 		var acciones []tipos.Accion
 		for _, a := range regla.Acciones {
 			acciones = append(acciones, tipos.Accion{
-				Tipo:    a.Tipo,
-				Destino: a.Destino,
-				Params:  a.Params,
+				Tipo:       a.Tipo,
+				Destino:    a.Destino,
+				Parametros: a.Parametros,
 			})
 		}
 
@@ -141,7 +141,7 @@ func authMiddleware(nodoID string) func(http.Handler) http.Handler {
 }
 
 // iniciarServidorHTTP inicia el servidor HTTP con los endpoints REST para consultas
-func (me *ManagerEdge) iniciarServidorHTTP() chan struct{} {
+func (me *GestorBorde) iniciarServidorHTTP() chan struct{} {
 	listo := make(chan struct{})
 
 	mux := http.NewServeMux()
@@ -161,7 +161,7 @@ func (me *ManagerEdge) iniciarServidorHTTP() chan struct{} {
 	}
 
 	go func() {
-		log.Printf("Edge %s: servidor HTTP iniciando en puerto %s", me.nodoID, me.puertoHTTP)
+		log.Printf("Borde %s: servidor HTTP iniciando en puerto %s", me.nodoID, me.puertoHTTP)
 		close(listo)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Printf("Error en servidor HTTP: %v", err)
@@ -172,7 +172,7 @@ func (me *ManagerEdge) iniciarServidorHTTP() chan struct{} {
 }
 
 // handleConsultaRango maneja consultas de rango de tiempo via REST
-func (me *ManagerEdge) handleConsultaRango(w http.ResponseWriter, r *http.Request) {
+func (me *GestorBorde) handleConsultaRango(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Método no permitido", http.StatusMethodNotAllowed)
 		return
@@ -212,7 +212,7 @@ func (me *ManagerEdge) handleConsultaRango(w http.ResponseWriter, r *http.Reques
 }
 
 // handleConsultaUltimo maneja consultas del último punto via REST
-func (me *ManagerEdge) handleConsultaUltimo(w http.ResponseWriter, r *http.Request) {
+func (me *GestorBorde) handleConsultaUltimo(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Método no permitido", http.StatusMethodNotAllowed)
 		return
@@ -279,7 +279,7 @@ func enviarRespuestaError(w http.ResponseWriter, mensaje string) {
 }
 
 // handleConsultaAgregacion maneja consultas de agregación simple via REST
-func (me *ManagerEdge) handleConsultaAgregacion(w http.ResponseWriter, r *http.Request) {
+func (me *GestorBorde) handleConsultaAgregacion(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Método no permitido", http.StatusMethodNotAllowed)
 		return
@@ -319,7 +319,7 @@ func (me *ManagerEdge) handleConsultaAgregacion(w http.ResponseWriter, r *http.R
 }
 
 // handleConsultaAgregacionTemporal maneja consultas de downsampling via REST
-func (me *ManagerEdge) handleConsultaAgregacionTemporal(w http.ResponseWriter, r *http.Request) {
+func (me *GestorBorde) handleConsultaAgregacionTemporal(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Método no permitido", http.StatusMethodNotAllowed)
 		return

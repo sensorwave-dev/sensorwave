@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/url"
 	"strings"
 	"sync"
@@ -17,36 +18,9 @@ import (
 
 const LOG_COAP = "COAP"
 
-func obtenerTopicoCoAP(r *mux.Message) (string, error) {
-	queries, err := r.Options().Queries()
-	if err != nil {
-		return "", err
-	}
-	loggerPrint(LOG_COAP, "CoAP queries recibidas: %v", queries)
-	for _, q := range queries {
-		partes := strings.SplitN(q, "=", 2)
-		if len(partes) == 0 {
-			continue
-		}
-		if partes[0] != "topico" {
-			continue
-		}
-		if len(partes) == 2 {
-			valor, err := url.QueryUnescape(partes[1])
-			if err != nil {
-				return "", err
-			}
-			return valor, nil
-		}
-		return "", nil
-	}
-	return "", nil
-}
-
 // datos de las conexiones de los observadores
 type Conexion struct {
 	conexion mux.Conn
-	context  context.Context
 	token    []byte
 }
 
@@ -67,7 +41,7 @@ func IniciarCoAP(puerto string) {
 	}))
 
 	// Iniciar el servidor en el puerto especificado
-	loggerPrint(LOG_COAP, "Iniciando servidor CoAP en :"+puerto)
+	loggerPrint(LOG_COAP, "Servidor iniciado - Puerto: %s", puerto)
 	err := coap.ListenAndServe("udp", ":"+puerto, r)
 	if err != nil {
 		loggerFatal(LOG_COAP, "Error al iniciar el servidor: %v", err)
@@ -77,11 +51,9 @@ func IniciarCoAP(puerto string) {
 // handleAll maneja todas las solicitudes CoAP, independientemente de la ruta
 func manejadorCoAP(w mux.ResponseWriter, r *mux.Message) {
 	metodo := r.Code()
-	loggerPrint(LOG_COAP, "Solicitud recibida: Método %v", metodo)
-
 	topico, err := obtenerTopicoCoAP(r)
 	if err != nil {
-		loggerPrint(LOG_COAP, "Error al obtener el query: %v", err)
+		loggerPrint(LOG_COAP, "Error - No se pudo obtener query: %v", err)
 		_ = w.SetResponse(codes.BadRequest, message.TextPlain, bytes.NewReader([]byte("Error en query")))
 		return
 	}
@@ -100,8 +72,6 @@ func manejadorCoAP(w mux.ResponseWriter, r *mux.Message) {
 	// obtengo si tiene observe
 	obs, err := r.Options().Observe()
 
-	loggerPrint(LOG_COAP, "Topico: %v, Observe: %v Metodo: %v", normalizado, obs, metodo)
-
 	// Responder según el método
 	switch {
 	// suscribirse
@@ -116,13 +86,13 @@ func manejadorCoAP(w mux.ResponseWriter, r *mux.Message) {
 		var mensaje Mensaje
 		cuerpo, err := r.Message.ReadBody()
 		if err != nil {
-			loggerPrint(LOG_COAP, "Error al procesar el cuerpo de la solicitud: "+err.Error())
+			loggerPrint(LOG_COAP, "Error - No se pudo procesar el cuerpo: %v", err)
 			return
 		}
 
 		err = json.Unmarshal(cuerpo, &mensaje)
 		if err != nil {
-			loggerPrint(LOG_COAP, "Error al convertir el cuerpo de la solicitud: "+err.Error())
+			loggerPrint(LOG_COAP, "Error - No se pudo convertir el cuerpo: %v", err)
 			_ = w.SetResponse(codes.BadRequest, message.TextPlain, bytes.NewReader([]byte("Cuerpo invalido")))
 			return
 		}
@@ -144,13 +114,13 @@ func manejadorCoAP(w mux.ResponseWriter, r *mux.Message) {
 			return
 		}
 		mensaje.Topico = mensajeTopico
-		loggerPrint(LOG_COAP, "Cuerpo convertido a Mensaje: %+v", mensaje)
+		loggerPrint(LOG_COAP, "Mensaje recibido - Tópico: %s, QoS: %d, MensajeID: %s", mensaje.Topico, mensaje.QoS, mensaje.MensajeID)
 		manejarPublicacionCoAP(w, r, normalizado, mensaje)
 	default:
-		loggerPrint(LOG_COAP, "Método no soportado: %v", metodo)
+		loggerPrint(LOG_COAP, "Error - Método no soportado: %v", metodo)
 		err := w.SetResponse(codes.MethodNotAllowed, message.TextPlain, bytes.NewReader([]byte("Método no soportado")))
 		if err != nil {
-			loggerPrint(LOG_COAP, "Error al enviar respuesta: %v", err)
+			loggerPrint(LOG_COAP, "Error - No se pudo enviar respuesta: %v", err)
 		}
 	}
 }
@@ -159,17 +129,16 @@ func manejadorCoAP(w mux.ResponseWriter, r *mux.Message) {
 func manejarSuscripcionCoAP(w mux.ResponseWriter, r *mux.Message, topico string) {
 
 	// agrego observadores
-	loggerPrint(LOG_COAP, "Agregando observador")
 	mutexCoAP.Lock()
-	datosConexion := Conexion{w.Conn(), r.Context(), r.Token()}
+	datosConexion := Conexion{w.Conn(), r.Token()}
 	observadores[topico] = append(observadores[topico], datosConexion)
-	loggerPrint(LOG_COAP, "Agregando Observador en topico %v", topico)
+	loggerPrint(LOG_COAP, "Observador agregado - Tópico: %s, Total observadores: %d", topico, len(observadores[topico]))
 	mutexCoAP.Unlock()
 
 	// enviar respuesta
 	err := enviarRespuesta(w.Conn(), r.Token(), Mensaje{Interno: true}, valor.Add(1))
 	if err != nil {
-		loggerPrint(LOG_COAP, "Error en transmitir: %v", err)
+		loggerPrint(LOG_COAP, "Error - No se pudo transmitir respuesta: %v", err)
 	}
 }
 
@@ -178,7 +147,7 @@ func manejarPublicacionCoAP(w mux.ResponseWriter, r *mux.Message, topico string,
 
 	err := w.SetResponse(codes.Created, message.TextPlain, nil)
 	if err != nil {
-		loggerPrint(LOG_COAP, "Error al enviar respuesta: %v", err)
+		loggerPrint(LOG_COAP, "Error - No se pudo enviar respuesta: %v", err)
 	}
 
 	// enviar publicaciones a los protocolos
@@ -193,7 +162,7 @@ func manejarPublicacionCoAP(w mux.ResponseWriter, r *mux.Message, topico string,
 func eliminarSuscripcionCoAP(w mux.ResponseWriter, r *mux.Message, ruta string) {
 	err := enviarRespuesta(w.Conn(), r.Token(), Mensaje{Interno: true}, -1)
 	if err != nil {
-		loggerPrint(LOG_COAP, "Error al enviar respuesta: %v", err)
+		loggerPrint(LOG_COAP, "Error - No se pudo enviar respuesta: %v", err)
 	}
 	// quito el observador
 	mutexCoAP.Lock()
@@ -222,20 +191,56 @@ func enviarRespuesta(cc mux.Conn, token []byte, mensaje Mensaje, obs int64) erro
 }
 
 func enviarRespuestaConTipo(cc mux.Conn, token []byte, mensaje Mensaje, obs int64, tipo message.Type) error {
-	m := cc.AcquireMessage(cc.Context())
+	if cc == nil {
+		return fmt.Errorf("conexión CoAP nula")
+	}
+
+	// En CoAP/UDP no usamos el contexto de la conexión porque UDP es stateless
+	// y el contexto expira rápidamente. Usamos context.Background() para el mensaje.
+	m := cc.AcquireMessage(context.Background())
 	defer cc.ReleaseMessage(m)
 	m.SetCode(codes.Content)
 	m.SetType(tipo)
 	m.SetToken(token)
 	mensajeBytes, err := json.Marshal(mensaje)
 	if err != nil {
-		loggerPrint(LOG_COAP, "Error al convertir el mensaje a []byte: %v", err)
-		return err
+		return fmt.Errorf("error al serializar mensaje: %v", err)
 	}
 	m.SetBody(bytes.NewReader(mensajeBytes))
 	m.SetContentFormat(message.TextPlain)
 	if obs >= 0 {
 		m.SetObserve(uint32(obs))
 	}
-	return cc.WriteMessage(m)
+
+	// Intentar enviar el mensaje. Si falla, entonces sí hay un problema real.
+	if err := cc.WriteMessage(m); err != nil {
+		return fmt.Errorf("error al escribir mensaje CoAP: %v", err)
+	}
+
+	return nil
+}
+
+func obtenerTopicoCoAP(r *mux.Message) (string, error) {
+	queries, err := r.Options().Queries()
+	if err != nil {
+		return "", err
+	}
+	for _, q := range queries {
+		partes := strings.SplitN(q, "=", 2)
+		if len(partes) == 0 {
+			continue
+		}
+		if partes[0] != "topico" {
+			continue
+		}
+		if len(partes) == 2 {
+			valor, err := url.QueryUnescape(partes[1])
+			if err != nil {
+				return "", err
+			}
+			return valor, nil
+		}
+		return "", nil
+	}
+	return "", nil
 }

@@ -54,7 +54,7 @@ func TestTipoDatos_String_Desconocido(t *testing.T) {
 
 // TestTipoDatos_String_TodosTipos verifica String() para todos los tipos en tabla
 func TestTipoDatos_String_TodosTipos(t *testing.T) {
-	testCases := []struct {
+	casosDePrueba := []struct {
 		tipo     TipoDatos
 		esperado string
 	}{
@@ -65,7 +65,7 @@ func TestTipoDatos_String_TodosTipos(t *testing.T) {
 		{Desconocido, ""},
 	}
 
-	for _, tc := range testCases {
+	for _, tc := range casosDePrueba {
 		t.Run(tc.esperado, func(t *testing.T) {
 			resultado := tc.tipo.String()
 			if resultado != tc.esperado {
@@ -385,9 +385,9 @@ func TestTipoDatos_ValidarCompresion_MensajeError(t *testing.T) {
 
 // TestTipoDatos_GobEncode verifica la serialización de TipoDatos
 func TestTipoDatos_GobEncode(t *testing.T) {
-	testCases := []TipoDatos{Boolean, Integer, Real, Text, Desconocido}
+	casosDePrueba := []TipoDatos{Boolean, Integer, Real, Text, Desconocido}
 
-	for _, td := range testCases {
+	for _, td := range casosDePrueba {
 		t.Run(td.String(), func(t *testing.T) {
 			data, err := td.GobEncode()
 			if err != nil {
@@ -456,7 +456,7 @@ func TestTipoDatos_GobRoundtrip_TodosTipos(t *testing.T) {
 
 // TestTipoDatos_MarshalJSON verifica la serialización JSON de TipoDatos
 func TestTipoDatos_MarshalJSON(t *testing.T) {
-	testCases := []struct {
+	casosDePrueba := []struct {
 		tipo     TipoDatos
 		esperado string
 	}{
@@ -467,7 +467,7 @@ func TestTipoDatos_MarshalJSON(t *testing.T) {
 		{Desconocido, `""`},
 	}
 
-	for _, tc := range testCases {
+	for _, tc := range casosDePrueba {
 		t.Run(tc.tipo.String(), func(t *testing.T) {
 			data, err := json.Marshal(tc.tipo)
 			if err != nil {
@@ -485,7 +485,7 @@ func TestTipoDatos_MarshalJSON(t *testing.T) {
 
 // TestTipoDatos_UnmarshalJSON verifica la deserialización JSON de TipoDatos
 func TestTipoDatos_UnmarshalJSON(t *testing.T) {
-	testCases := []struct {
+	casosDePrueba := []struct {
 		json     string
 		esperado TipoDatos
 	}{
@@ -496,7 +496,7 @@ func TestTipoDatos_UnmarshalJSON(t *testing.T) {
 		{`""`, Desconocido},
 	}
 
-	for _, tc := range testCases {
+	for _, tc := range casosDePrueba {
 		t.Run(tc.esperado.String(), func(t *testing.T) {
 			var resultado TipoDatos
 			err := json.Unmarshal([]byte(tc.json), &resultado)

@@ -1,6 +1,6 @@
-package edge
+package borde
 
-// Package edge - funciones de consulta para series temporales.
+// Package borde - funciones de consulta para series temporales.
 // Este archivo contiene las operaciones de lectura y consulta sobre datos almacenados.
 
 import (
@@ -25,7 +25,7 @@ import (
 //   - Cada columna representa una serie (ordenadas alfabéticamente por path)
 //   - Cada fila representa un timestamp único (ordenados ascendente)
 //   - Los valores faltantes se representan como nil
-func (me *ManagerEdge) ConsultarRango(path string, tiempoInicio, tiempoFin time.Time) (tipos.ResultadoConsultaRango, error) {
+func (me *GestorBorde) ConsultarRango(path string, tiempoInicio, tiempoFin time.Time) (tipos.ResultadoConsultaRango, error) {
 	// Resolver series (path exacto o patrón wildcard)
 	series, err := me.resolverSeries(path)
 	if err != nil {
@@ -113,7 +113,7 @@ func construirResultadoTabular(medicionesPorSerie map[string]map[int64]interface
 }
 
 // consultarRangoSerie consulta mediciones de una serie específica dentro de un rango de tiempo
-func (me *ManagerEdge) consultarRangoSerie(serie tipos.Serie, tiempoInicio, tiempoFin time.Time) ([]tipos.Medicion, error) {
+func (me *GestorBorde) consultarRangoSerie(serie tipos.Serie, tiempoInicio, tiempoFin time.Time) ([]tipos.Medicion, error) {
 	// Convertir los tiempos a Unix timestamp (en nanosegundos)
 	tiempoInicioUnix := tiempoInicio.UnixNano()
 	tiempoFinUnix := tiempoFin.UnixNano()
@@ -136,11 +136,11 @@ func (me *ManagerEdge) consultarRangoSerie(serie tipos.Serie, tiempoInicio, tiem
 
 	// Iterar sobre todos los bloques de la serie
 	for iter.First(); iter.Valid(); iter.Next() {
-		key := string(iter.Key())
+		clave := string(iter.Key())
 
 		// Extraer timestamps del rango del bloque desde la clave para skip temprano
 		// Formato: data/XXXXXXXXXX/TTTTTTTTTTTTTTTTTTTT_TTTTTTTTTTTTTTTTTTTT
-		if skipBloque := me.deberiaSkipearBloque(key, tiempoInicioUnix, tiempoFinUnix); skipBloque {
+		if skipBloque := me.deberiaOmitirBloque(clave, tiempoInicioUnix, tiempoFinUnix); skipBloque {
 			continue // Skip este bloque sin descomprimirlo
 		}
 
@@ -168,7 +168,7 @@ func (me *ManagerEdge) consultarRangoSerie(serie tipos.Serie, tiempoInicio, tiem
 
 	// Obtener datos del buffer en memoria si existe
 	if bufferInterface, ok := me.buffers.Load(serie.Path); ok {
-		buffer := bufferInterface.(*SerieBuffer)
+		buffer := bufferInterface.(*BufferSerie)
 		buffer.mu.Lock()
 
 		// Revisar datos del buffer que están dentro del rango
@@ -196,7 +196,7 @@ func (me *ManagerEdge) consultarRangoSerie(serie tipos.Serie, tiempoInicio, tiem
 //
 // Retorna el último punto de CADA serie en formato columnar.
 // Las series sin datos son excluidas del resultado.
-func (me *ManagerEdge) ConsultarUltimoPunto(path string, tiempoInicio, tiempoFin *time.Time) (tipos.ResultadoConsultaPunto, error) {
+func (me *GestorBorde) ConsultarUltimoPunto(path string, tiempoInicio, tiempoFin *time.Time) (tipos.ResultadoConsultaPunto, error) {
 	// Resolver series (path exacto o patrón wildcard)
 	series, err := me.resolverSeries(path)
 	if err != nil {
@@ -251,7 +251,7 @@ func (me *ManagerEdge) ConsultarUltimoPunto(path string, tiempoInicio, tiempoFin
 // consultarUltimoPuntoSerie obtiene la última medición de una serie específica.
 // Si tiempoInicio y tiempoFin son nil, retorna el último punto absoluto.
 // Si se especifican, retorna el último punto dentro del rango.
-func (me *ManagerEdge) consultarUltimoPuntoSerie(serie tipos.Serie, tiempoInicio, tiempoFin *time.Time) (tipos.Medicion, error) {
+func (me *GestorBorde) consultarUltimoPuntoSerie(serie tipos.Serie, tiempoInicio, tiempoFin *time.Time) (tipos.Medicion, error) {
 	// Si hay rango temporal, usar ConsultarRango y encontrar el último
 	if tiempoInicio != nil && tiempoFin != nil {
 		resultado, err := me.consultarRangoSerie(serie, *tiempoInicio, *tiempoFin)
@@ -274,7 +274,7 @@ func (me *ManagerEdge) consultarUltimoPuntoSerie(serie tipos.Serie, tiempoInicio
 	// Sin rango: comportamiento original - último punto absoluto
 	// Primero revisar el buffer en memoria
 	if bufferInterface, ok := me.buffers.Load(serie.Path); ok {
-		buffer := bufferInterface.(*SerieBuffer)
+		buffer := bufferInterface.(*BufferSerie)
 		buffer.mu.Lock()
 		defer buffer.mu.Unlock()
 
@@ -332,8 +332,8 @@ func (me *ManagerEdge) consultarUltimoPuntoSerie(serie tipos.Serie, tiempoInicio
 	return ultimaMedicion, nil
 }
 
-// deberiaSkipearBloque determina si un bloque debe ser omitido basado en su rango temporal
-func (me *ManagerEdge) deberiaSkipearBloque(clave string, tiempoInicio, tiempoFin int64) bool {
+// deberiaOmitirBloque determina si un bloque debe ser omitido basado en su rango temporal
+func (me *GestorBorde) deberiaOmitirBloque(clave string, tiempoInicio, tiempoFin int64) bool {
 	partes := strings.Split(clave, "/")
 
 	// Formato: data/XXXXXXXXXX/TTTTTTTTTTTTTTTTTTTT_TTTTTTTTTTTTTTTTTTTT
@@ -367,7 +367,7 @@ func (me *ManagerEdge) deberiaSkipearBloque(clave string, tiempoInicio, tiempoFi
 // resolverSeries resuelve un path (exacto o con patrón wildcard) a una lista de series.
 // Si el path contiene "*", busca por patrón usando ListarSeriesPorPath.
 // Si no, busca la serie exacta usando ObtenerSeries.
-func (me *ManagerEdge) resolverSeries(path string) ([]tipos.Serie, error) {
+func (me *GestorBorde) resolverSeries(path string) ([]tipos.Serie, error) {
 	if strings.Contains(path, "*") {
 		series, err := me.ListarSeriesPorPath(path)
 		if err != nil {
@@ -395,7 +395,7 @@ func (me *ManagerEdge) resolverSeries(path string) ([]tipos.Serie, error) {
 // Soporta múltiples agregaciones en una sola pasada sobre los datos.
 // Retorna un valor agregado por cada serie y cada agregación.
 // Las series sin datos en el rango son excluidas del resultado.
-func (me *ManagerEdge) ConsultarAgregacion(
+func (me *GestorBorde) ConsultarAgregacion(
 	path string,
 	tiempoInicio, tiempoFin time.Time,
 	agregaciones []tipos.TipoAgregacion,
@@ -466,7 +466,7 @@ func (me *ManagerEdge) ConsultarAgregacion(
 //
 // Ejemplo: ConsultarAgregacionTemporal("sensor_01/temp", inicio, fin, []TipoAgregacion{AgregacionMinimo, AgregacionMaximo}, time.Hour)
 // retorna el mínimo y máximo por cada hora en el rango para cada serie.
-func (me *ManagerEdge) ConsultarAgregacionTemporal(
+func (me *GestorBorde) ConsultarAgregacionTemporal(
 	path string,
 	tiempoInicio, tiempoFin time.Time,
 	agregaciones []tipos.TipoAgregacion,
@@ -491,14 +491,14 @@ func (me *ManagerEdge) ConsultarAgregacionTemporal(
 	}
 
 	// Generar buckets temporales
-	buckets := generarBuckets(tiempoInicio.UnixNano(), tiempoFin.UnixNano(), intervalo.Nanoseconds())
-	numBuckets := len(buckets)
+	intervalos := generarIntervalos(tiempoInicio.UnixNano(), tiempoFin.UnixNano(), intervalo.Nanoseconds())
+	numIntervalos := len(intervalos)
 	numSeries := len(resultado.Series)
 
 	// Inicializar acumuladores para cada [bucket][serie]
 	// Usamos slices para acumular valores antes de calcular la agregación
-	acumuladores := make([][][]float64, numBuckets)
-	for b := 0; b < numBuckets; b++ {
+	acumuladores := make([][][]float64, numIntervalos)
+	for b := 0; b < numIntervalos; b++ {
 		acumuladores[b] = make([][]float64, numSeries)
 		for s := 0; s < numSeries; s++ {
 			acumuladores[b][s] = make([]float64, 0)
@@ -510,8 +510,8 @@ func (me *ManagerEdge) ConsultarAgregacionTemporal(
 	tiempoInicioNano := tiempoInicio.UnixNano()
 
 	for filaIdx, tiempo := range resultado.Tiempos {
-		bucketIdx := calcularBucketIdx(tiempo, tiempoInicioNano, intervaloNano, numBuckets)
-		if bucketIdx < 0 || bucketIdx >= numBuckets {
+		bucketIdx := calcularIndiceIntervalo(tiempo, tiempoInicioNano, intervaloNano, numIntervalos)
+		if bucketIdx < 0 || bucketIdx >= numIntervalos {
 			continue
 		}
 
@@ -533,8 +533,8 @@ func (me *ManagerEdge) ConsultarAgregacionTemporal(
 	// Estructura: [agregacion][bucket][serie]
 	valores := make([][][]float64, len(agregaciones))
 	for aggIdx, agregacion := range agregaciones {
-		valores[aggIdx] = make([][]float64, numBuckets)
-		for b := 0; b < numBuckets; b++ {
+		valores[aggIdx] = make([][]float64, numIntervalos)
+		for b := 0; b < numIntervalos; b++ {
 			valores[aggIdx][b] = make([]float64, numSeries)
 			for s := 0; s < numSeries; s++ {
 				if len(acumuladores[b][s]) == 0 {
@@ -553,29 +553,29 @@ func (me *ManagerEdge) ConsultarAgregacionTemporal(
 
 	return tipos.ResultadoAgregacionTemporal{
 		Series:       resultado.Series, // Ya ordenadas alfabéticamente por ConsultarRango
-		Tiempos:      buckets,
+		Tiempos:      intervalos,
 		Agregaciones: agregaciones,
 		Valores:      valores,
 	}, nil
 }
 
-// generarBuckets genera los timestamps de inicio de cada bucket temporal
-func generarBuckets(tiempoInicio, tiempoFin, intervalo int64) []int64 {
-	var buckets []int64
+// generarIntervalos genera los timestamps de inicio de cada bucket temporal
+func generarIntervalos(tiempoInicio, tiempoFin, intervalo int64) []int64 {
+	var intervalos []int64
 	for t := tiempoInicio; t < tiempoFin; t += intervalo {
-		buckets = append(buckets, t)
+		intervalos = append(intervalos, t)
 	}
-	return buckets
+	return intervalos
 }
 
-// calcularBucketIdx calcula el índice del bucket para un timestamp dado
-func calcularBucketIdx(tiempo, tiempoInicio, intervalo int64, numBuckets int) int {
+// calcularIndiceIntervalo calcula el índice del bucket para un timestamp dado
+func calcularIndiceIntervalo(tiempo, tiempoInicio, intervalo int64, numIntervalos int) int {
 	if tiempo < tiempoInicio {
 		return -1
 	}
 	idx := int((tiempo - tiempoInicio) / intervalo)
-	if idx >= numBuckets {
-		return numBuckets - 1 // Último bucket captura valores hasta tiempoFin
+	if idx >= numIntervalos {
+		return numIntervalos - 1 // Último bucket captura valores hasta tiempoFin
 	}
 	return idx
 }

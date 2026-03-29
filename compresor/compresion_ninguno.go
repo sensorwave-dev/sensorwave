@@ -17,7 +17,7 @@ import (
 //   - bool → bool (sin cambio)
 //   - string → string (sin cambio)
 //
-// Ver edge/utils.go:inferirTipo() y compresor/compresion_utils.go:ConvertirA*Array()
+// Ver borde/utils.go:inferirTipo() y compresor/compresion_utils.go:ConvertirA*Array()
 type CompresorNingunoGenerico[T any] struct{}
 
 // Comprimir serializa valores sin compresión según el tipo

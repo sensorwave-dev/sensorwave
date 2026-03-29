@@ -29,36 +29,36 @@ func (c *CompresorDiccionario) Comprimir(valores []string) ([]byte, error) {
 	}
 
 	// Construir diccionario de strings únicos
-	dict := make(map[string]uint16)
-	entries := []string{}
+	diccionario := make(map[string]uint16)
+	entradas := []string{}
 	indices := make([]uint16, len(valores))
 
-	nextID := uint16(0)
+	siguienteID := uint16(0)
 	for i, val := range valores {
-		if id, exists := dict[val]; exists {
+		if id, existe := diccionario[val]; existe {
 			// String ya existe en diccionario
 			indices[i] = id
 		} else {
 			// Nuevo string
-			if nextID == 65535 {
+			if siguienteID == 65535 {
 				return nil, fmt.Errorf("demasiadas entradas únicas (máximo 65535)")
 			}
-			dict[val] = nextID
-			entries = append(entries, val)
-			indices[i] = nextID
-			nextID++
+			diccionario[val] = siguienteID
+			entradas = append(entradas, val)
+			indices[i] = siguienteID
+			siguienteID++
 		}
 	}
 
 	var buffer bytes.Buffer
 
 	// Escribir número de entradas en el diccionario
-	if err := binary.Write(&buffer, binary.LittleEndian, uint16(len(entries))); err != nil {
+	if err := binary.Write(&buffer, binary.LittleEndian, uint16(len(entradas))); err != nil {
 		return nil, err
 	}
 
 	// Escribir cada entrada del diccionario
-	for _, entry := range entries {
+	for _, entry := range entradas {
 		if len(entry) > 65535 {
 			return nil, fmt.Errorf("string demasiado largo: %d bytes (máximo 65535)", len(entry))
 		}
@@ -93,14 +93,14 @@ func (c *CompresorDiccionario) Descomprimir(datos []byte) ([]string, error) {
 	reader := bytes.NewReader(datos)
 
 	// Leer número de entradas en el diccionario
-	var numEntries uint16
-	if err := binary.Read(reader, binary.LittleEndian, &numEntries); err != nil {
+	var numEntradas uint16
+	if err := binary.Read(reader, binary.LittleEndian, &numEntradas); err != nil {
 		return nil, fmt.Errorf("error leyendo número de entradas: %v", err)
 	}
 
 	// Leer diccionario
-	entries := make([]string, numEntries)
-	for i := uint16(0); i < numEntries; i++ {
+	entradas := make([]string, numEntradas)
+	for i := uint16(0); i < numEntradas; i++ {
 		// Leer longitud del string
 		var strLen uint16
 		if err := binary.Read(reader, binary.LittleEndian, &strLen); err != nil {
@@ -112,7 +112,7 @@ func (c *CompresorDiccionario) Descomprimir(datos []byte) ([]string, error) {
 		if _, err := reader.Read(strBytes); err != nil {
 			return nil, fmt.Errorf("error leyendo string %d: %v", i, err)
 		}
-		entries[i] = string(strBytes)
+		entradas[i] = string(strBytes)
 	}
 
 	// Leer índices comprimidos (resto de los datos)
@@ -131,10 +131,10 @@ func (c *CompresorDiccionario) Descomprimir(datos []byte) ([]string, error) {
 	// Reconstruir strings usando el diccionario
 	resultado := make([]string, len(indices))
 	for i, idx := range indices {
-		if idx >= numEntries {
-			return nil, fmt.Errorf("índice fuera de rango: %d (máximo %d)", idx, numEntries-1)
+		if idx >= numEntradas {
+			return nil, fmt.Errorf("índice fuera de rango: %d (máximo %d)", idx, numEntradas-1)
 		}
-		resultado[i] = entries[idx]
+		resultado[i] = entradas[idx]
 	}
 
 	return resultado, nil

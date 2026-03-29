@@ -8,8 +8,8 @@ import (
 
 // Utilidades para conversión de bytes
 
-// Int64ToBytes convierte un int64 a 8 bytes
-func Int64ToBytes(i int64) []byte {
+// Int64ABytes convierte un int64 a 8 bytes
+func Int64ABytes(i int64) []byte {
 	bytes := make([]byte, 8)
 	for j := 0; j < 8; j++ {
 		bytes[j] = byte(i >> (56 - j*8))
@@ -17,8 +17,8 @@ func Int64ToBytes(i int64) []byte {
 	return bytes
 }
 
-// BytesToInt64 convierte 8 bytes a int64
-func BytesToInt64(bytes []byte) int64 {
+// BytesAInt64 convierte 8 bytes a int64
+func BytesAInt64(bytes []byte) int64 {
 	if len(bytes) < 8 {
 		return 0
 	}
@@ -29,8 +29,8 @@ func BytesToInt64(bytes []byte) int64 {
 	return i
 }
 
-// int32ToBytes convierte un int32 a 4 bytes
-func int32ToBytes(i int32) []byte {
+// int32ABytes convierte un int32 a 4 bytes
+func int32ABytes(i int32) []byte {
 	bytes := make([]byte, 4)
 	for j := 0; j < 4; j++ {
 		bytes[j] = byte(i >> (24 - j*8))
@@ -38,8 +38,8 @@ func int32ToBytes(i int32) []byte {
 	return bytes
 }
 
-// bytesToInt32 convierte 4 bytes a int32
-func bytesToInt32(bytes []byte) int32 {
+// bytesAInt32 convierte 4 bytes a int32
+func bytesAInt32(bytes []byte) int32 {
 	if len(bytes) < 4 {
 		return 0
 	}

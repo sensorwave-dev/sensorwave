@@ -3,99 +3,103 @@ package servidor
 import "encoding/json"
 
 func enviarCoAP(LOG string, payload Mensaje) {
-	// publica el mensaje en el tópico
-	loggerPrint(LOG, ">> Publicando mensaje en el tópico CoAP "+payload.Topico)
+	loggerPrint(LOG, "Distribuyendo mensaje - Destino: CoAP, Tópico: %s, QoS: %d, MensajeID: %s", payload.Topico, payload.QoS, payload.MensajeID)
 
 	if err := validarQoS(payload); err != nil {
-		loggerPrint(LOG, "QoS invalido para distribuir en CoAP: %v", err)
+		loggerPrint(LOG, "Error - QoS inválido para CoAP: %v", err)
 		return
 	}
 
 	publicacion, err := normalizarYValidarTopico(payload.Topico, false)
 	if err != nil {
-		loggerPrint(LOG, "Topico invalido para distribuir en CoAP: %v", payload.Topico)
+		loggerPrint(LOG, "Error - Tópico inválido para CoAP: %v", payload.Topico)
 		return
 	}
 
 	// notifico a todos los observadores
 	mutexCoAP.Lock()
+	totalEnviados := 0
+	totalErrores := 0
 	for patron, conexiones := range observadores {
 		if !coincidePatron(publicacion, patron) {
 			continue
 		}
 		for _, o := range conexiones {
-			loggerPrint(LOG, "Enviando mensaje a observador CoAP: %v", o)
-			enviarRespuestaConTipo(o.conexion, o.token, payload, valor.Add(1), tipoCoAPPorQoS(payload.QoS))
+			if err := enviarRespuestaConTipo(o.conexion, o.token, payload, valor.Add(1), tipoCoAPPorQoS(payload.QoS)); err != nil {
+				loggerPrint(LOG, "Error - No se pudo enviar a observador CoAP - Tópico: %s, Error: %v", payload.Topico, err)
+				totalErrores++
+			} else {
+				totalEnviados++
+			}
 		}
 	}
 	mutexCoAP.Unlock()
+	if totalEnviados > 0 || totalErrores > 0 {
+		loggerPrint(LOG, "Mensaje distribuido en CoAP - Tópico: %s, Enviados: %d, Errores: %d", payload.Topico, totalEnviados, totalErrores)
+	} else {
+		loggerPrint(LOG, "Mensaje no distribuido en CoAP - Tópico: %s (sin observadores)", payload.Topico)
+	}
 }
 
 func enviarHTTP(LOG string, payload Mensaje) {
-	// publica el mensaje en el tópico
-	loggerPrint(LOG, ">> Publicando mensaje en el tópico HTTP "+payload.Topico)
+	loggerPrint(LOG, "Distribuyendo mensaje - Destino: HTTP, Tópico: %s, QoS: %d, MensajeID: %s", payload.Topico, payload.QoS, payload.MensajeID)
 
 	if err := validarQoS(payload); err != nil {
-		loggerPrint(LOG, "QoS invalido para distribuir en HTTP: %v", err)
+		loggerPrint(LOG, "Error - QoS inválido para HTTP: %v", err)
 		return
 	}
 
 	publicacion, err := normalizarYValidarTopico(payload.Topico, false)
 	if err != nil {
-		loggerPrint(LOG, "Topico invalido para distribuir en HTTP: %v", payload.Topico)
+		loggerPrint(LOG, "Error - Tópico inválido para HTTP: %v", payload.Topico)
 		return
 	}
 
-	mensajeHTTP, err := serializarMensajeHTTP(payload)
-	if err != nil {
-		loggerPrint(LOG, "Error al serializar mensaje HTTP: %v", err)
-		return
-	}
-
-	// no se serializa el mensaje a JSON
-	// Publicar un mensaje en el tópico
 	// Enviar el mensaje a todos los clientes suscritos al tópico
 	mutexHTTP.Lock()
-	loggerPrint(LOG, "Patrones HTTP registrados: %d", len(clientesPorTopico))
-	clienteEnviado := false
+	totalEnviados := 0
+	totalClientes := 0
 	for patron, clientes := range clientesPorTopico {
-		loggerPrint(LOG, "Patron HTTP: %s, clientes: %d, payload: %s", patron, len(clientes), publicacion)
+		totalClientes += len(clientes)
 		if !coincidePatron(publicacion, patron) {
 			continue
 		}
 		for _, cliente := range clientes {
-			clienteEnviado = true
+			totalEnviados++
 			if payload.QoS == 1 {
-				enviarHTTPQoS1(LOG, cliente, mensajeHTTP, payload.MessageID)
+				enviarHTTPQoS1(LOG, cliente, payload)
 				continue
 			}
 			go func(c *Cliente) {
 				select {
-				case c.Channel <- mensajeHTTP:
-					loggerPrint(LOG, "Mensaje enviado al tópico HTTP"+payload.Topico)
+				case c.Canal <- payload:
+					// Éxito silencioso para evitar spam de logs
 				default:
-					loggerPrint(LOG, "No se pudo enviar el mensaje al cliente en el tópico HTTP"+payload.Topico+" (canal bloqueado)")
+					loggerPrint(LOG, "Error - No se pudo enviar mensaje - ClienteID: %s, Tópico: %s, Razón: canal bloqueado", c.ID, payload.Topico)
 				}
 			}(cliente)
 		}
 	}
-	if !clienteEnviado {
-		loggerPrint(LOG, "No hay clientes suscritos al tópico HTTP "+payload.Topico)
-	}
 	mutexHTTP.Unlock()
+	if totalEnviados > 0 {
+		loggerPrint(LOG, "Mensaje distribuido en HTTP - Tópico: %s, Clientes: %d/%d", payload.Topico, totalEnviados, totalClientes)
+	} else {
+		loggerPrint(LOG, "Mensaje no distribuido en HTTP - Tópico: %s (sin clientes suscritos)", payload.Topico)
+	}
 }
 
 func enviarMQTT(LOG string, payload Mensaje) {
-	// publica el mensaje en el tópico
-	loggerPrint(LOG, ">> Publicando mensaje en el tópico MQTT "+payload.Topico)
+	loggerPrint(LOG, "Distribuyendo mensaje - Destino: MQTT, Tópico: %s, QoS: %d, MensajeID: %s", payload.Topico, payload.QoS, payload.MensajeID)
 
-	// Serializar el mensaje a JSON
 	mensajeBytes, err := json.Marshal(payload)
 	if err != nil {
-		loggerPrint(LOG, "Error al serializar el mensaje: %v", err)
+		loggerPrint(LOG, "Error - No se pudo serializar mensaje: %v", err)
+		return
 	}
-	// Publicar un mensaje en el tópico
-	if token := clienteMQTT.Publish(payload.Topico, 0, false, mensajeBytes); token.Wait() && token.Error() != nil {
-		loggerPrint(LOG, "Error: %v", token.Error())
+	token := clienteMQTT.Publish(payload.Topico, byte(payload.QoS), false, mensajeBytes)
+	if token.Wait() && token.Error() != nil {
+		loggerPrint(LOG, "Error - No se pudo publicar mensaje: %v", token.Error())
+		return
 	}
+	loggerPrint(LOG, "Mensaje distribuido en MQTT - Tópico: %s, QoS: %d", payload.Topico, payload.QoS)
 }

@@ -15,13 +15,13 @@ import (
 // ConfiguracionS3 contiene la configuración para conectar con almacenamiento S3-compatible
 // (Garage, AWS S3, Cloudflare R2, MinIO, etc.).
 // Esta estructura es compartida entre:
-// - edge: para migración de datos de series a la nube
+// - borde: para migración de datos de series a la nube
 // - despachador: para registro y descubrimiento de nodos
 type ConfiguracionS3 struct {
 	Endpoint        string // URL del servidor S3, ej: http://localhost:3900
 	AccessKeyID     string // Access Key ID de S3
 	SecretAccessKey string // Secret Access Key de S3
-	Bucket          string // Nombre del bucket (edge: datos, despachador: nodos)
+	Bucket          string // Nombre del bucket (borde: datos, despachador: nodos)
 	Region          string // Región (puede ser cualquier valor para implementaciones como Garage)
 }
 

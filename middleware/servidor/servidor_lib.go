@@ -11,7 +11,7 @@ type Mensaje struct {
 	Payload   []byte `json:"payload"`
 	Interno   bool   `json:"interno"`
 	QoS       int    `json:"qos,omitempty"`
-	MessageID string `json:"messageId,omitempty"`
+	MensajeID string `json:"mensajeId,omitempty"`
 }
 
 // loggerFatal imprime un mensaje en la consola de log y termina

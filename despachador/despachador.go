@@ -19,16 +19,16 @@ import (
 	"github.com/sensorwave-dev/sensorwave/tipos"
 )
 
-type ManagerDespachador struct {
-	nodos       map[string]*tipos.Nodo
-	mu          sync.RWMutex
-	s3          tipos.ClienteS3
-	config      tipos.ConfiguracionS3
-	done        chan struct{}
-	clienteEdge clienteEdge
+type GestorDespachador struct {
+	nodos        map[string]*tipos.Nodo
+	mu           sync.RWMutex
+	s3           tipos.ClienteS3
+	config       tipos.ConfiguracionS3
+	finalizado   chan struct{}
+	clienteBorde clienteBorde
 }
 
-// Opciones configura la creación de un ManagerDespachador.
+// Opciones configura la creación de un GestorDespachador.
 // El despachador SIEMPRE requiere S3 para coordinar nodos.
 type Opciones struct {
 	ConfigS3 tipos.ConfiguracionS3 // Siempre requerido
@@ -38,13 +38,13 @@ type Opciones struct {
 // No se exporta para evitar uso en producción.
 type opcionesInternas struct {
 	Opciones
-	clienteS3   tipos.ClienteS3 // Para inyección en tests
-	clienteEdge clienteEdge     // Para inyección en tests
+	clienteS3    tipos.ClienteS3 // Para inyección en tests
+	clienteBorde clienteBorde    // Para inyección en tests
 }
 
-// clienteEdge define la interfaz para comunicación con nodos edge.
+// clienteBorde define la interfaz para comunicación con nodos borde.
 // Es privada para evitar que usuarios externos inyecten implementaciones.
-type clienteEdge interface {
+type clienteBorde interface {
 	// ConsultarRango consulta mediciones en un rango de tiempo (formato tabular)
 	ConsultarRango(ctx context.Context, nodoID string, direccion string, req tipos.SolicitudConsultaRango) (*tipos.RespuestaConsultaRango, error)
 
@@ -58,22 +58,22 @@ type clienteEdge interface {
 	ConsultarAgregacionTemporal(ctx context.Context, nodoID string, direccion string, req tipos.SolicitudConsultaAgregacionTemporal) (*tipos.RespuestaConsultaAgregacionTemporal, error)
 }
 
-// clienteEdgeHTTP implementa clienteEdge usando HTTP directo
-type clienteEdgeHTTP struct {
+// clienteBordeHTTP implementa clienteBorde usando HTTP directo
+type clienteBordeHTTP struct {
 	httpClient *http.Client
 }
 
-// nuevoClienteEdgeHTTP crea un nuevo cliente HTTP para comunicación con edges
-func nuevoClienteEdgeHTTP() *clienteEdgeHTTP {
-	return &clienteEdgeHTTP{
+// nuevoClienteBordeHTTP crea un nuevo cliente HTTP para comunicación con bordes
+func nuevoClienteBordeHTTP() *clienteBordeHTTP {
+	return &clienteBordeHTTP{
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
 		},
 	}
 }
 
-// ConsultarRango implementa clienteEdge
-func (c *clienteEdgeHTTP) ConsultarRango(ctx context.Context, cliente string, direccion string, req tipos.SolicitudConsultaRango) (*tipos.RespuestaConsultaRango, error) {
+// ConsultarRango implementa clienteBorde
+func (c *clienteBordeHTTP) ConsultarRango(ctx context.Context, cliente string, direccion string, req tipos.SolicitudConsultaRango) (*tipos.RespuestaConsultaRango, error) {
 	// Serializar solicitud con Gob
 	solicitudBytes, err := tipos.SerializarGob(req)
 	if err != nil {
@@ -101,7 +101,7 @@ func (c *clienteEdgeHTTP) ConsultarRango(ctx context.Context, cliente string, di
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("error del edge (status %d): %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("error del borde (status %d): %s", resp.StatusCode, string(body))
 	}
 
 	// Leer respuesta
@@ -119,8 +119,8 @@ func (c *clienteEdgeHTTP) ConsultarRango(ctx context.Context, cliente string, di
 	return &respuesta, nil
 }
 
-// ConsultarUltimoPunto implementa clienteEdge
-func (c *clienteEdgeHTTP) ConsultarUltimoPunto(ctx context.Context, nodoID string, direccion string, req tipos.SolicitudConsultaPunto) (*tipos.RespuestaConsultaPunto, error) {
+// ConsultarUltimoPunto implementa clienteBorde
+func (c *clienteBordeHTTP) ConsultarUltimoPunto(ctx context.Context, nodoID string, direccion string, req tipos.SolicitudConsultaPunto) (*tipos.RespuestaConsultaPunto, error) {
 	// Serializar solicitud con Gob
 	solicitudBytes, err := tipos.SerializarGob(req)
 	if err != nil {
@@ -149,7 +149,7 @@ func (c *clienteEdgeHTTP) ConsultarUltimoPunto(ctx context.Context, nodoID strin
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("error del edge (status %d): %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("error del borde (status %d): %s", resp.StatusCode, string(body))
 	}
 
 	// Leer respuesta
@@ -167,8 +167,8 @@ func (c *clienteEdgeHTTP) ConsultarUltimoPunto(ctx context.Context, nodoID strin
 	return &respuesta, nil
 }
 
-// ConsultarAgregacion implementa clienteEdge
-func (c *clienteEdgeHTTP) ConsultarAgregacion(ctx context.Context, nodoID string, direccion string, req tipos.SolicitudConsultaAgregacion) (*tipos.RespuestaConsultaAgregacion, error) {
+// ConsultarAgregacion implementa clienteBorde
+func (c *clienteBordeHTTP) ConsultarAgregacion(ctx context.Context, nodoID string, direccion string, req tipos.SolicitudConsultaAgregacion) (*tipos.RespuestaConsultaAgregacion, error) {
 	// Serializar solicitud con Gob
 	solicitudBytes, err := tipos.SerializarGob(req)
 	if err != nil {
@@ -195,7 +195,7 @@ func (c *clienteEdgeHTTP) ConsultarAgregacion(ctx context.Context, nodoID string
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("error del edge (status %d): %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("error del borde (status %d): %s", resp.StatusCode, string(body))
 	}
 
 	// Leer respuesta
@@ -213,8 +213,8 @@ func (c *clienteEdgeHTTP) ConsultarAgregacion(ctx context.Context, nodoID string
 	return &respuesta, nil
 }
 
-// ConsultarAgregacionTemporal implementa clienteEdge
-func (c *clienteEdgeHTTP) ConsultarAgregacionTemporal(ctx context.Context, nodoID string, direccion string, req tipos.SolicitudConsultaAgregacionTemporal) (*tipos.RespuestaConsultaAgregacionTemporal, error) {
+// ConsultarAgregacionTemporal implementa clienteBorde
+func (c *clienteBordeHTTP) ConsultarAgregacionTemporal(ctx context.Context, nodoID string, direccion string, req tipos.SolicitudConsultaAgregacionTemporal) (*tipos.RespuestaConsultaAgregacionTemporal, error) {
 	// Serializar solicitud con Gob
 	solicitudBytes, err := tipos.SerializarGob(req)
 	if err != nil {
@@ -241,7 +241,7 @@ func (c *clienteEdgeHTTP) ConsultarAgregacionTemporal(ctx context.Context, nodoI
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("error del edge (status %d): %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("error del borde (status %d): %s", resp.StatusCode, string(body))
 	}
 
 	// Leer respuesta
@@ -259,15 +259,15 @@ func (c *clienteEdgeHTTP) ConsultarAgregacionTemporal(ctx context.Context, nodoI
 	return &respuesta, nil
 }
 
-// Crear inicializa y retorna un nuevo ManagerDespachador.
+// Crear inicializa y retorna un nuevo GestorDespachador.
 // El despachador SIEMPRE requiere una configuración de S3 válida para coordinar nodos.
-func Crear(opts Opciones) (*ManagerDespachador, error) {
+func Crear(opts Opciones) (*GestorDespachador, error) {
 	return crearConOpciones(opcionesInternas{Opciones: opts})
 }
 
 // crearConOpciones es la función interna que permite inyectar dependencias para testing.
 // No se exporta para evitar uso en producción.
-func crearConOpciones(opts opcionesInternas) (*ManagerDespachador, error) {
+func crearConOpciones(opts opcionesInternas) (*GestorDespachador, error) {
 	cfg := opts.ConfigS3
 
 	// Usar cliente S3 inyectado o crear uno nuevo
@@ -299,47 +299,47 @@ func crearConOpciones(opts opcionesInternas) (*ManagerDespachador, error) {
 		log.Printf("Bucket %s creado exitosamente", cfg.Bucket)
 	}
 
-	// Usar cliente Edge inyectado o crear uno HTTP real
-	var edgeClient clienteEdge
-	if opts.clienteEdge != nil {
-		edgeClient = opts.clienteEdge
+	// Usar cliente Borde inyectado o crear uno HTTP real
+	var bordeClient clienteBorde
+	if opts.clienteBorde != nil {
+		bordeClient = opts.clienteBorde
 	} else {
-		edgeClient = nuevoClienteEdgeHTTP()
+		bordeClient = nuevoClienteBordeHTTP()
 	}
 
-	// Crear ManagerDespachador
-	manager := &ManagerDespachador{
-		s3:          s3Client,
-		config:      cfg,
-		nodos:       make(map[string]*tipos.Nodo),
-		done:        make(chan struct{}),
-		clienteEdge: edgeClient,
+	// Crear GestorDespachador
+	gestor := &GestorDespachador{
+		s3:           s3Client,
+		config:       cfg,
+		nodos:        make(map[string]*tipos.Nodo),
+		finalizado:   make(chan struct{}),
+		clienteBorde: bordeClient,
 	}
 
 	// Cargar nodos iniciales desde S3
-	if err := manager.cargarNodosDesdeS3(); err != nil {
+	if err := gestor.cargarNodosDesdeS3(); err != nil {
 		log.Printf("Advertencia: no se pudieron cargar nodos iniciales: %v", err)
 	}
 
 	// Iniciar gorutina que sincroniza periódicamente los nodos
-	go manager.monitorearNodos()
+	go gestor.monitorearNodos()
 
 	log.Printf("Conectado a S3 en %s (bucket: %s)", cfg.Endpoint, cfg.Bucket)
 	log.Printf("Despachador iniciado")
-	return manager, nil
+	return gestor, nil
 }
 
-// Cerrar limpia los recursos del ManagerDespachador
-func (m *ManagerDespachador) Cerrar() error {
+// Cerrar limpia los recursos del GestorDespachador
+func (m *GestorDespachador) Cerrar() error {
 	log.Printf("Cerrando despachador...")
 	// Señalizar cierre
-	close(m.done)
+	close(m.finalizado)
 	log.Printf("Despachador cerrado exitosamente")
 	return nil
 }
 
 // ListarNodos retorna una lista de nodos registrados
-func (m *ManagerDespachador) ListarNodos() []tipos.Nodo {
+func (m *GestorDespachador) ListarNodos() []tipos.Nodo {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -360,7 +360,7 @@ type SerieInfo struct {
 // ListarSeries retorna todas las series de todos los nodos que coinciden con el patrón.
 // Si patron es vacío o "*", retorna todas las series.
 // Soporta wildcards (ej: "sensor/*", "*/temp").
-func (m *ManagerDespachador) ListarSeries(patron string) []SerieInfo {
+func (m *GestorDespachador) ListarSeries(patron string) []SerieInfo {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -371,7 +371,7 @@ func (m *ManagerDespachador) ListarSeries(patron string) []SerieInfo {
 	var series []SerieInfo
 	for _, nodo := range m.nodos {
 		for path, serie := range nodo.Series {
-			if tipos.MatchPath(path, patron) {
+			if tipos.CoincidePath(path, patron) {
 				series = append(series, SerieInfo{
 					Serie:  serie,
 					NodoID: nodo.NodoID,
@@ -390,7 +390,7 @@ func (m *ManagerDespachador) ListarSeries(patron string) []SerieInfo {
 
 // ObtenerSerie retorna la información de una serie específica.
 // Retorna nil si la serie no existe.
-func (m *ManagerDespachador) ObtenerSerie(path string) *SerieInfo {
+func (m *GestorDespachador) ObtenerSerie(path string) *SerieInfo {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -412,7 +412,7 @@ type EstadisticasDespachador struct {
 	NumReglas int
 }
 
-func (m *ManagerDespachador) ObtenerEstadisticas() EstadisticasDespachador {
+func (m *GestorDespachador) ObtenerEstadisticas() EstadisticasDespachador {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -438,7 +438,7 @@ type ReglaInfo struct {
 
 // ListarReglas retorna todas las reglas de todos los nodos
 // Filtros opcionales: nodoID (string vacío = todos), soloActivas (bool)
-func (m *ManagerDespachador) ListarReglas(nodoID string, soloActivas bool) []ReglaInfo {
+func (m *GestorDespachador) ListarReglas(nodoID string, soloActivas bool) []ReglaInfo {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -468,7 +468,7 @@ func (m *ManagerDespachador) ListarReglas(nodoID string, soloActivas bool) []Reg
 
 // ObtenerRegla busca una regla por su ID en todos los nodos
 // Retorna la regla, el nodoID, y un bool indicando si se encontró
-func (m *ManagerDespachador) ObtenerRegla(id string) (*tipos.Regla, string, bool) {
+func (m *GestorDespachador) ObtenerRegla(id string) (*tipos.Regla, string, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -484,7 +484,7 @@ func (m *ManagerDespachador) ObtenerRegla(id string) (*tipos.Regla, string, bool
 }
 
 // ListarReglasPorNodo retorna todas las reglas de un nodo específico
-func (m *ManagerDespachador) ListarReglasPorNodo(nodoID string) []tipos.Regla {
+func (m *GestorDespachador) ListarReglasPorNodo(nodoID string) []tipos.Regla {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -501,13 +501,13 @@ func (m *ManagerDespachador) ListarReglasPorNodo(nodoID string) []tipos.Regla {
 }
 
 // monitorearNodos verifica periódicamente el estado de los nodos
-func (m *ManagerDespachador) monitorearNodos() {
+func (m *GestorDespachador) monitorearNodos() {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
 	for {
 		select {
-		case <-m.done:
+		case <-m.finalizado:
 			return
 		case <-ticker.C:
 			if err := m.cargarNodosDesdeS3(); err != nil {
@@ -518,7 +518,7 @@ func (m *ManagerDespachador) monitorearNodos() {
 }
 
 // cargarNodosDesdeS3 sincroniza la lista de nodos con S3
-func (m *ManagerDespachador) cargarNodosDesdeS3() error {
+func (m *GestorDespachador) cargarNodosDesdeS3() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -580,17 +580,17 @@ func (m *ManagerDespachador) cargarNodosDesdeS3() error {
 }
 
 // ============================================================================
-// CONSULTAS (S3 + Edge)
+// CONSULTAS (S3 + Borde)
 // ============================================================================
 
 // ============================================================================
 // HELPERS REUTILIZABLES
 // ============================================================================
 
-// consultarPuntoEdge consulta el último punto al edge con timeout
+// consultarPuntoBorde consulta el último punto al borde con timeout
 // Los tiempos son opcionales (nil = sin filtro temporal)
 // Retorna el resultado columnar y error si hubo problemas
-func (m *ManagerDespachador) consultarPuntoEdge(nodo tipos.Nodo, nombreSerie string, tiempoInicio, tiempoFin *time.Time, timeout time.Duration) (tipos.ResultadoConsultaPunto, error) {
+func (m *GestorDespachador) consultarPuntoBorde(nodo tipos.Nodo, nombreSerie string, tiempoInicio, tiempoFin *time.Time, timeout time.Duration) (tipos.ResultadoConsultaPunto, error) {
 	solicitud := tipos.SolicitudConsultaPunto{
 		Serie: nombreSerie,
 	}
@@ -608,20 +608,20 @@ func (m *ManagerDespachador) consultarPuntoEdge(nodo tipos.Nodo, nombreSerie str
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	respuesta, err := m.clienteEdge.ConsultarUltimoPunto(ctx, nodo.NodoID, nodo.Direccion, solicitud)
+	respuesta, err := m.clienteBorde.ConsultarUltimoPunto(ctx, nodo.NodoID, nodo.Direccion, solicitud)
 	if err != nil {
 		return tipos.ResultadoConsultaPunto{}, err
 	}
 
 	if respuesta.Error != "" {
-		return tipos.ResultadoConsultaPunto{}, fmt.Errorf("error del edge: %s", respuesta.Error)
+		return tipos.ResultadoConsultaPunto{}, fmt.Errorf("error del borde: %s", respuesta.Error)
 	}
 
 	return respuesta.Resultado, nil
 }
 
 // descargarYDescomprimirBloque descarga un bloque de S3 y lo descomprime
-func (m *ManagerDespachador) descargarYDescomprimirBloque(clave string, serie tipos.Serie) ([]tipos.Medicion, error) {
+func (m *GestorDespachador) descargarYDescomprimirBloque(clave string, serie tipos.Serie) ([]tipos.Medicion, error) {
 	ctx := context.TODO()
 	getOutput, err := m.s3.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(m.config.Bucket),
@@ -652,7 +652,7 @@ func (m *ManagerDespachador) descargarYDescomprimirBloque(clave string, serie ti
 
 // listarBloquesEnRango lista los bloques de S3 que intersectan con el rango de tiempo dado
 // Retorna las claves de los objetos S3 ordenadas por tiempo
-func (m *ManagerDespachador) listarBloquesEnRango(nodoID string, serieID int, inicio, fin int64) ([]string, error) {
+func (m *GestorDespachador) listarBloquesEnRango(nodoID string, serieID int, inicio, fin int64) ([]string, error) {
 	ctx := context.TODO()
 
 	// Prefijo para buscar bloques: <nodoID>/<serieID>_
@@ -694,7 +694,7 @@ func (m *ManagerDespachador) listarBloquesEnRango(nodoID string, serieID int, in
 
 // consultarDatosS3 descarga y descomprime bloques de S3 en el rango especificado
 // Usa 10 workers para descargas paralelas, sin timeout por bloque para no perder datos
-func (m *ManagerDespachador) consultarDatosS3(nodo tipos.Nodo, serie tipos.Serie, inicio, fin int64) ([]tipos.Medicion, error) {
+func (m *GestorDespachador) consultarDatosS3(nodo tipos.Nodo, serie tipos.Serie, inicio, fin int64) ([]tipos.Medicion, error) {
 	// Listar bloques en el rango
 	bloques, err := m.listarBloquesEnRango(nodo.NodoID, serie.SerieId, inicio, fin)
 	if err != nil {
@@ -771,9 +771,9 @@ func (m *ManagerDespachador) consultarDatosS3(nodo tipos.Nodo, serie tipos.Serie
 	return todasMediciones, nil
 }
 
-// consultarEdgeConTimeout consulta datos al edge con un timeout específico
-// Retorna resultado vacío y nil si el edge no está disponible (timeout o error de conexión)
-func (m *ManagerDespachador) consultarEdgeConTimeout(nodo tipos.Nodo, serie string, inicio, fin int64, timeout time.Duration) (tipos.ResultadoConsultaRango, error) {
+// consultarBordeConTimeout consulta datos al borde con un timeout específico
+// Retorna resultado vacío y nil si el borde no está disponible (timeout o error de conexión)
+func (m *GestorDespachador) consultarBordeConTimeout(nodo tipos.Nodo, serie string, inicio, fin int64, timeout time.Duration) (tipos.ResultadoConsultaRango, error) {
 	solicitud := tipos.SolicitudConsultaRango{
 		Serie:        serie,
 		TiempoInicio: inicio,
@@ -783,23 +783,23 @@ func (m *ManagerDespachador) consultarEdgeConTimeout(nodo tipos.Nodo, serie stri
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	respuesta, err := m.clienteEdge.ConsultarRango(ctx, nodo.NodoID, nodo.Direccion, solicitud)
+	respuesta, err := m.clienteBorde.ConsultarRango(ctx, nodo.NodoID, nodo.Direccion, solicitud)
 	if err != nil {
-		// Timeout o error de conexión no es crítico, el edge puede estar offline
-		log.Printf("Error consultando edge %s (serie: %s): %v", nodo.NodoID, serie, err)
+		// Timeout o error de conexión no es crítico, el borde puede estar offline
+		log.Printf("Error consultando borde %s (serie: %s): %v", nodo.NodoID, serie, err)
 		return tipos.ResultadoConsultaRango{}, nil
 	}
 
 	if respuesta.Error != "" {
-		return tipos.ResultadoConsultaRango{}, fmt.Errorf("error del edge: %s", respuesta.Error)
+		return tipos.ResultadoConsultaRango{}, fmt.Errorf("error del borde: %s", respuesta.Error)
 	}
 
 	return respuesta.Resultado, nil
 }
 
-// combinarResultadosTabular combina datos de S3 (mediciones) y edge (tabular) en formato tabular.
-// Los datos del edge tienen prioridad en caso de duplicados de timestamp.
-func (m *ManagerDespachador) combinarResultadosTabular(datosS3 []tipos.Medicion, datosEdge tipos.ResultadoConsultaRango, seriePath string) tipos.ResultadoConsultaRango {
+// combinarResultadosTabular combina datos de S3 (mediciones) y borde (tabular) en formato tabular.
+// Los datos del borde tienen prioridad en caso de duplicados de timestamp.
+func (m *GestorDespachador) combinarResultadosTabular(datosS3 []tipos.Medicion, datosBorde tipos.ResultadoConsultaRango, seriePath string) tipos.ResultadoConsultaRango {
 	// Mapa para almacenar valores: timestamp -> valor
 	valoresPorTiempo := make(map[int64]interface{})
 	timestampsUnicos := make(map[int64]struct{})
@@ -810,10 +810,10 @@ func (m *ManagerDespachador) combinarResultadosTabular(datosS3 []tipos.Medicion,
 		timestampsUnicos[m.Tiempo] = struct{}{}
 	}
 
-	// Luego agregar datos del edge (tienen prioridad)
-	// El edge puede tener múltiples series, buscamos la que coincide con seriePath
+	// Luego agregar datos del borde (tienen prioridad)
+	// El borde puede tener múltiples series, buscamos la que coincide con seriePath
 	indiceColumna := -1
-	for i, s := range datosEdge.Series {
+	for i, s := range datosBorde.Series {
 		if s == seriePath {
 			indiceColumna = i
 			break
@@ -821,9 +821,9 @@ func (m *ManagerDespachador) combinarResultadosTabular(datosS3 []tipos.Medicion,
 	}
 
 	if indiceColumna >= 0 {
-		for filaIdx, tiempo := range datosEdge.Tiempos {
-			if filaIdx < len(datosEdge.Valores) && indiceColumna < len(datosEdge.Valores[filaIdx]) {
-				valor := datosEdge.Valores[filaIdx][indiceColumna]
+		for filaIdx, tiempo := range datosBorde.Tiempos {
+			if filaIdx < len(datosBorde.Valores) && indiceColumna < len(datosBorde.Valores[filaIdx]) {
+				valor := datosBorde.Valores[filaIdx][indiceColumna]
 				if valor != nil {
 					valoresPorTiempo[tiempo] = valor
 					timestampsUnicos[tiempo] = struct{}{}
@@ -856,7 +856,7 @@ func (m *ManagerDespachador) combinarResultadosTabular(datosS3 []tipos.Medicion,
 
 // combinarResultadosTabulares combina múltiples resultados tabulares en uno solo.
 // Las series se ordenan alfabéticamente, los timestamps se unifican y ordenan ascendente.
-func (m *ManagerDespachador) combinarResultadosTabulares(resultados []tipos.ResultadoConsultaRango) tipos.ResultadoConsultaRango {
+func (m *GestorDespachador) combinarResultadosTabulares(resultados []tipos.ResultadoConsultaRango) tipos.ResultadoConsultaRango {
 	if len(resultados) == 0 {
 		return tipos.ResultadoConsultaRango{}
 	}
@@ -918,11 +918,11 @@ func (m *ManagerDespachador) combinarResultadosTabulares(resultados []tipos.Resu
 	}
 }
 
-// ConsultarRango consulta datos combinando S3 (histórico) y edge (reciente).
-// Esta función funciona incluso si el edge está offline (corte de luz/internet).
+// ConsultarRango consulta datos combinando S3 (histórico) y borde (reciente).
+// Esta función funciona incluso si el borde está offline (corte de luz/internet).
 // Soporta wildcards en el path de la serie (ej: */temp, sensor_01/*).
 // Retorna resultado en formato tabular.
-func (m *ManagerDespachador) ConsultarRango(nombreSerie string, tiempoInicio, tiempoFin time.Time) (tipos.ResultadoConsultaRango, error) {
+func (m *GestorDespachador) ConsultarRango(nombreSerie string, tiempoInicio, tiempoFin time.Time) (tipos.ResultadoConsultaRango, error) {
 	// Buscar todas las series que coincidan (path exacto o wildcard)
 	seriesEncontradas, err := m.buscarSeriesPorPath(nombreSerie)
 	if err != nil {
@@ -936,29 +936,29 @@ func (m *ManagerDespachador) ConsultarRango(nombreSerie string, tiempoInicio, ti
 	type resultadoSerie struct {
 		resultado tipos.ResultadoConsultaRango
 		errS3     error
-		errEdge   error
+		errBorde  error
 		path      string
 		nodoID    string
 	}
 	resultados := make(chan resultadoSerie, len(seriesEncontradas))
 
-	// Consultar cada serie en paralelo (S3 + edge)
+	// Consultar cada serie en paralelo (S3 + borde)
 	for _, sn := range seriesEncontradas {
 		go func(sn serieConNodo) {
 			var datosS3 []tipos.Medicion
-			var datosEdge tipos.ResultadoConsultaRango
-			var errS3, errEdge error
+			var datosBorde tipos.ResultadoConsultaRango
+			var errS3, errBorde error
 
 			// Consultar S3
 			datosS3, errS3 = m.consultarDatosS3(sn.nodo, sn.serie, inicio, fin)
 
-			// Consultar edge
-			datosEdge, errEdge = m.consultarEdgeConTimeout(sn.nodo, sn.path, inicio, fin, 5*time.Second)
+			// Consultar borde
+			datosBorde, errBorde = m.consultarBordeConTimeout(sn.nodo, sn.path, inicio, fin, 5*time.Second)
 
 			resultados <- resultadoSerie{
-				resultado: m.combinarResultadosTabular(datosS3, datosEdge, sn.path),
+				resultado: m.combinarResultadosTabular(datosS3, datosBorde, sn.path),
 				errS3:     errS3,
-				errEdge:   errEdge,
+				errBorde:  errBorde,
 				path:      sn.path,
 				nodoID:    sn.nodo.NodoID,
 			}
@@ -978,9 +978,9 @@ func (m *ManagerDespachador) ConsultarRango(nombreSerie string, tiempoInicio, ti
 			erroresS3 = append(erroresS3, fmt.Sprintf("%s: %v", res.path, res.errS3))
 		}
 
-		// Los errores de edge se registran como nodos no disponibles
-		if res.errEdge != nil {
-			log.Printf("Advertencia: error consultando edge para serie %s: %v", res.path, res.errEdge)
+		// Los errores de borde se registran como nodos no disponibles
+		if res.errBorde != nil {
+			log.Printf("Advertencia: error consultando borde para serie %s: %v", res.path, res.errBorde)
 			nodosNoDisponibles[res.nodoID] = struct{}{}
 		}
 
@@ -1007,7 +1007,7 @@ func (m *ManagerDespachador) ConsultarRango(nombreSerie string, tiempoInicio, ti
 	return resultado, nil
 }
 
-// ConsultarUltimoPunto busca el último punto de cada serie combinando S3 y edge.
+// ConsultarUltimoPunto busca el último punto de cada serie combinando S3 y borde.
 // Soporta wildcards en el path de la serie (ej: */temp, sensor_01/*).
 // Los tiempos son opcionales:
 //   - Si ambos son nil: retorna el último punto absoluto de cada serie
@@ -1015,7 +1015,7 @@ func (m *ManagerDespachador) ConsultarRango(nombreSerie string, tiempoInicio, ti
 //
 // Retorna el último punto de CADA serie en formato columnar.
 // Las series sin datos son excluidas del resultado.
-func (m *ManagerDespachador) ConsultarUltimoPunto(nombreSerie string, tiempoInicio, tiempoFin *time.Time) (tipos.ResultadoConsultaPunto, error) {
+func (m *GestorDespachador) ConsultarUltimoPunto(nombreSerie string, tiempoInicio, tiempoFin *time.Time) (tipos.ResultadoConsultaPunto, error) {
 	// Buscar todas las series que coincidan (path exacto o wildcard)
 	seriesEncontradas, err := m.buscarSeriesPorPath(nombreSerie)
 	if err != nil {
@@ -1034,12 +1034,12 @@ func (m *ManagerDespachador) ConsultarUltimoPunto(nombreSerie string, tiempoInic
 
 	// Canal para recoger resultados de todas las consultas
 	type resultadoSerie struct {
-		path      string
-		tiempo    int64
-		valor     interface{}
-		ok        bool
-		nodoID    string
-		edgeError bool // Indica si hubo error al consultar el edge
+		path       string
+		tiempo     int64
+		valor      interface{}
+		ok         bool
+		nodoID     string
+		bordeError bool // Indica si hubo error al consultar el borde
 	}
 	resultados := make(chan resultadoSerie, len(seriesEncontradas))
 
@@ -1049,26 +1049,26 @@ func (m *ManagerDespachador) ConsultarUltimoPunto(nombreSerie string, tiempoInic
 			var tiempo int64
 			var valor interface{}
 			encontrado := false
-			edgeError := false
+			bordeError := false
 
-			// Primero intentar con el edge (tiene datos más recientes)
-			resEdge, err := m.consultarPuntoEdge(sn.nodo, sn.path, tiempoInicio, tiempoFin, 5*time.Second)
+			// Primero intentar con el borde (tiene datos más recientes)
+			resBorde, err := m.consultarPuntoBorde(sn.nodo, sn.path, tiempoInicio, tiempoFin, 5*time.Second)
 			if err != nil {
-				edgeError = true
-				log.Printf("Advertencia: error consultando edge para serie %s: %v", sn.path, err)
-			} else if len(resEdge.Series) > 0 {
-				// El edge retorna formato columnar, buscar nuestra serie
-				for i, s := range resEdge.Series {
+				bordeError = true
+				log.Printf("Advertencia: error consultando borde para serie %s: %v", sn.path, err)
+			} else if len(resBorde.Series) > 0 {
+				// El borde retorna formato columnar, buscar nuestra serie
+				for i, s := range resBorde.Series {
 					if s == sn.path {
-						tiempo = resEdge.Tiempos[i]
-						valor = resEdge.Valores[i]
+						tiempo = resBorde.Tiempos[i]
+						valor = resBorde.Valores[i]
 						encontrado = true
 						break
 					}
 				}
 			}
 
-			// Si el edge no responde o no tiene datos, buscar en S3
+			// Si el borde no responde o no tiene datos, buscar en S3
 			if !encontrado {
 				bloques, err := m.listarBloquesEnRango(sn.nodo.NodoID, sn.serie.SerieId, inicioNano, finNano)
 				if err == nil && len(bloques) > 0 {
@@ -1096,12 +1096,12 @@ func (m *ManagerDespachador) ConsultarUltimoPunto(nombreSerie string, tiempoInic
 			}
 
 			resultados <- resultadoSerie{
-				path:      sn.path,
-				tiempo:    tiempo,
-				valor:     valor,
-				ok:        encontrado,
-				nodoID:    sn.nodo.NodoID,
-				edgeError: edgeError,
+				path:       sn.path,
+				tiempo:     tiempo,
+				valor:      valor,
+				ok:         encontrado,
+				nodoID:     sn.nodo.NodoID,
+				bordeError: bordeError,
 			}
 		}(sn)
 	}
@@ -1117,7 +1117,7 @@ func (m *ManagerDespachador) ConsultarUltimoPunto(nombreSerie string, tiempoInic
 
 	for i := 0; i < len(seriesEncontradas); i++ {
 		res := <-resultados
-		if res.edgeError {
+		if res.bordeError {
 			nodosNoDisponibles[res.nodoID] = struct{}{}
 		}
 		if res.ok {
@@ -1180,22 +1180,22 @@ func calcularAgregacionSimple(valores []float64, agregacion tipos.TipoAgregacion
 		return suma / float64(len(valores)), nil
 
 	case tipos.AgregacionMaximo:
-		max := valores[0]
+		maximo := valores[0]
 		for _, v := range valores[1:] {
-			if v > max {
-				max = v
+			if v > maximo {
+				maximo = v
 			}
 		}
-		return max, nil
+		return maximo, nil
 
 	case tipos.AgregacionMinimo:
-		min := valores[0]
+		minimo := valores[0]
 		for _, v := range valores[1:] {
-			if v < min {
-				min = v
+			if v < minimo {
+				minimo = v
 			}
 		}
-		return min, nil
+		return minimo, nil
 
 	case tipos.AgregacionSuma:
 		suma := 0.0
@@ -1204,7 +1204,7 @@ func calcularAgregacionSimple(valores []float64, agregacion tipos.TipoAgregacion
 		}
 		return suma, nil
 
-	case tipos.AgregacionCount:
+	case tipos.AgregacionConteo:
 		return float64(len(valores)), nil
 
 	default:
@@ -1227,7 +1227,7 @@ type serieConNodo struct {
 // Funciona tanto para paths exactos como para patrones con wildcards.
 // Si es un path exacto, retorna la única serie que coincide.
 // Si es un patrón wildcard, retorna todas las series que coincidan.
-func (m *ManagerDespachador) buscarSeriesPorPath(path string) ([]serieConNodo, error) {
+func (m *GestorDespachador) buscarSeriesPorPath(path string) ([]serieConNodo, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -1237,7 +1237,7 @@ func (m *ManagerDespachador) buscarSeriesPorPath(path string) ([]serieConNodo, e
 	if tipos.EsPatronWildcard(path) {
 		for _, nodo := range m.nodos {
 			for seriePath, serie := range nodo.Series {
-				if tipos.MatchPath(seriePath, path) {
+				if tipos.CoincidePath(seriePath, path) {
 					resultados = append(resultados, serieConNodo{
 						nodo:  *nodo,
 						serie: serie,
@@ -1267,11 +1267,11 @@ func (m *ManagerDespachador) buscarSeriesPorPath(path string) ([]serieConNodo, e
 	return resultados, nil
 }
 
-// ConsultarAgregacion calcula múltiples agregaciones combinando datos de S3 y edge.
+// ConsultarAgregacion calcula múltiples agregaciones combinando datos de S3 y borde.
 // Soporta tipos de agregación: promedio, maximo, minimo, suma, count.
 // Soporta wildcards en el path de la serie (ej: */temp, sensor_01/*).
 // Retorna una matriz donde Valores[agregacion][serie] contiene el valor agregado.
-func (m *ManagerDespachador) ConsultarAgregacion(
+func (m *GestorDespachador) ConsultarAgregacion(
 	nombreSerie string,
 	tiempoInicio, tiempoFin time.Time,
 	agregaciones []tipos.TipoAgregacion,
@@ -1337,11 +1337,11 @@ func (m *ManagerDespachador) ConsultarAgregacion(
 }
 
 // ConsultarAgregacionTemporal calcula múltiples agregaciones agrupadas por intervalos de tiempo (downsampling).
-// Combina datos de S3 y edge, luego agrupa por intervalos del tamaño especificado.
+// Combina datos de S3 y borde, luego agrupa por intervalos del tamaño especificado.
 // Soporta wildcards en el path de la serie (ej: */temp, sensor_01/*).
 // Retorna una matriz donde Valores[agregacion][bucket][serie] contiene el valor agregado.
 // Los valores faltantes (bucket sin datos para una serie) se representan como math.NaN().
-func (m *ManagerDespachador) ConsultarAgregacionTemporal(
+func (m *GestorDespachador) ConsultarAgregacionTemporal(
 	nombreSerie string,
 	tiempoInicio, tiempoFin time.Time,
 	agregaciones []tipos.TipoAgregacion,
@@ -1365,15 +1365,15 @@ func (m *ManagerDespachador) ConsultarAgregacionTemporal(
 		return tipos.ResultadoAgregacionTemporal{}, fmt.Errorf("no se encontraron datos para la serie %s en el rango especificado", nombreSerie)
 	}
 
-	// Generar buckets temporales
-	buckets := generarBuckets(tiempoInicio.UnixNano(), tiempoFin.UnixNano(), intervalo.Nanoseconds())
-	numBuckets := len(buckets)
+	// Generar intervalos temporales
+	intervalos := generarIntervalos(tiempoInicio.UnixNano(), tiempoFin.UnixNano(), intervalo.Nanoseconds())
+	numIntervalos := len(intervalos)
 	numSeries := len(resultado.Series)
 	numAgregaciones := len(agregaciones)
 
-	// Inicializar acumuladores para cada [bucket][serie]
-	acumuladores := make([][][]float64, numBuckets)
-	for b := 0; b < numBuckets; b++ {
+	// Inicializar acumuladores para cada [intervalo][serie]
+	acumuladores := make([][][]float64, numIntervalos)
+	for b := 0; b < numIntervalos; b++ {
 		acumuladores[b] = make([][]float64, numSeries)
 		for s := 0; s < numSeries; s++ {
 			acumuladores[b][s] = make([]float64, 0)
@@ -1385,8 +1385,8 @@ func (m *ManagerDespachador) ConsultarAgregacionTemporal(
 	tiempoInicioNano := tiempoInicio.UnixNano()
 
 	for filaIdx, tiempo := range resultado.Tiempos {
-		bucketIdx := calcularBucketIdx(tiempo, tiempoInicioNano, intervaloNano, numBuckets)
-		if bucketIdx < 0 || bucketIdx >= numBuckets {
+		indiceIntervalo := calcularIndiceIntervalo(tiempo, tiempoInicioNano, intervaloNano, numIntervalos)
+		if indiceIntervalo < 0 || indiceIntervalo >= numIntervalos {
 			continue
 		}
 
@@ -1405,15 +1405,15 @@ func (m *ManagerDespachador) ConsultarAgregacionTemporal(
 			default:
 				continue
 			}
-			acumuladores[bucketIdx][colIdx] = append(acumuladores[bucketIdx][colIdx], valorFloat)
+			acumuladores[indiceIntervalo][colIdx] = append(acumuladores[indiceIntervalo][colIdx], valorFloat)
 		}
 	}
 
-	// Calcular todas las agregaciones: Valores[agregacion][bucket][serie]
+	// Calcular todas las agregaciones: Valores[agregacion][intervalo][serie]
 	valores := make([][][]float64, numAgregaciones)
 	for agIdx, agregacion := range agregaciones {
-		valores[agIdx] = make([][]float64, numBuckets)
-		for b := 0; b < numBuckets; b++ {
+		valores[agIdx] = make([][]float64, numIntervalos)
+		for b := 0; b < numIntervalos; b++ {
 			valores[agIdx][b] = make([]float64, numSeries)
 			for s := 0; s < numSeries; s++ {
 				if len(acumuladores[b][s]) == 0 {
@@ -1432,30 +1432,30 @@ func (m *ManagerDespachador) ConsultarAgregacionTemporal(
 
 	return tipos.ResultadoAgregacionTemporal{
 		Series:             resultado.Series, // Ya ordenadas alfabéticamente por ConsultarRango
-		Tiempos:            buckets,
+		Tiempos:            intervalos,
 		Agregaciones:       agregaciones,
-		Valores:            valores, // [agregacion][bucket][serie]
+		Valores:            valores, // [agregacion][intervalo][serie]
 		NodosNoDisponibles: resultado.NodosNoDisponibles,
 	}, nil
 }
 
-// generarBuckets genera los timestamps de inicio de cada bucket temporal
-func generarBuckets(tiempoInicio, tiempoFin, intervalo int64) []int64 {
-	var buckets []int64
+// generarIntervalos genera los timestamps de inicio de cada intervalo temporal
+func generarIntervalos(tiempoInicio, tiempoFin, intervalo int64) []int64 {
+	var intervalos []int64
 	for t := tiempoInicio; t < tiempoFin; t += intervalo {
-		buckets = append(buckets, t)
+		intervalos = append(intervalos, t)
 	}
-	return buckets
+	return intervalos
 }
 
-// calcularBucketIdx calcula el índice del bucket para un timestamp dado
-func calcularBucketIdx(tiempo, tiempoInicio, intervalo int64, numBuckets int) int {
+// calcularIndiceIntervalo calcula el índice del intervalo para un timestamp dado
+func calcularIndiceIntervalo(tiempo, tiempoInicio, intervalo int64, numIntervalos int) int {
 	if tiempo < tiempoInicio {
 		return -1
 	}
 	idx := int((tiempo - tiempoInicio) / intervalo)
-	if idx >= numBuckets {
-		return numBuckets - 1 // Último bucket captura valores hasta tiempoFin
+	if idx >= numIntervalos {
+		return numIntervalos - 1 // Último intervalo captura valores hasta tiempoFin
 	}
 	return idx
 }

@@ -165,8 +165,8 @@ func TestConfiguracionS3_ValidarMultiplesCamposVacios(t *testing.T) {
 	}
 
 	// Verificar que el primer error es sobre Endpoint
-	expectedError := "Endpoint es requerido"
-	if err.Error() != expectedError {
+	esperadoError := "Endpoint es requerido"
+	if err.Error() != esperadoError {
 		t.Logf("Error obtenido: %v (puede variar el orden de validación)", err)
 	}
 
@@ -351,9 +351,9 @@ func TestCrearClienteS3_EndpointHTTPS(t *testing.T) {
 // TestGenerarClaveS3Datos verifica generación de clave S3
 func TestGenerarClaveS3Datos(t *testing.T) {
 	clave := GenerarClaveS3Datos("nodo-001", 1, 1000, 2000)
-	expected := "nodo-001/0000000001_00000000000000001000_00000000000000002000"
-	if clave != expected {
-		t.Errorf("Clave incorrecta: esperada '%s', obtenida '%s'", expected, clave)
+	esperado := "nodo-001/0000000001_00000000000000001000_00000000000000002000"
+	if clave != esperado {
+		t.Errorf("Clave incorrecta: esperada '%s', obtenida '%s'", esperado, clave)
 	}
 	t.Log("✓ GenerarClaveS3Datos genera clave correcta")
 }
@@ -361,9 +361,9 @@ func TestGenerarClaveS3Datos(t *testing.T) {
 // TestGenerarClaveS3Datos_SerieGrande verifica con valores grandes
 func TestGenerarClaveS3Datos_SerieGrande(t *testing.T) {
 	clave := GenerarClaveS3Datos("nodo-001", 999999999, 1704067200000000000, 1704153600000000000)
-	expected := "nodo-001/0999999999_01704067200000000000_01704153600000000000"
-	if clave != expected {
-		t.Errorf("Clave incorrecta: esperada '%s', obtenida '%s'", expected, clave)
+	esperado := "nodo-001/0999999999_01704067200000000000_01704153600000000000"
+	if clave != esperado {
+		t.Errorf("Clave incorrecta: esperada '%s', obtenida '%s'", esperado, clave)
 	}
 	t.Log("✓ GenerarClaveS3Datos maneja series grandes correctamente")
 }
@@ -371,19 +371,19 @@ func TestGenerarClaveS3Datos_SerieGrande(t *testing.T) {
 // TestGenerarPrefijoS3Serie verifica generación de prefijo
 func TestGenerarPrefijoS3Serie(t *testing.T) {
 	prefijo := GenerarPrefijoS3Serie("nodo-001", 1)
-	expected := "nodo-001/0000000001_"
-	if prefijo != expected {
-		t.Errorf("Prefijo incorrecto: esperado '%s', obtenido '%s'", expected, prefijo)
+	esperado := "nodo-001/0000000001_"
+	if prefijo != esperado {
+		t.Errorf("Prefijo incorrecto: esperado '%s', obtenido '%s'", esperado, prefijo)
 	}
 	t.Log("✓ GenerarPrefijoS3Serie genera prefijo correcto")
 }
 
 // TestGenerarPrefijoS3Serie_SerieGrande verifica con serie grande
 func TestGenerarPrefijoS3Serie_SerieGrande(t *testing.T) {
-	prefijo := GenerarPrefijoS3Serie("nodo-edge-001", 123456789)
-	expected := "nodo-edge-001/0123456789_"
-	if prefijo != expected {
-		t.Errorf("Prefijo incorrecto: esperado '%s', obtenido '%s'", expected, prefijo)
+	prefijo := GenerarPrefijoS3Serie("nodo-borde-001", 123456789)
+	esperado := "nodo-borde-001/0123456789_"
+	if prefijo != esperado {
+		t.Errorf("Prefijo incorrecto: esperado '%s', obtenido '%s'", esperado, prefijo)
 	}
 	t.Log("✓ GenerarPrefijoS3Serie maneja series grandes correctamente")
 }

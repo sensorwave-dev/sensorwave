@@ -48,7 +48,7 @@ func TestSerializarDeserializarGob_Medicion(t *testing.T) {
 
 // TestSerializarDeserializarGob_MedicionTodosTipos verifica serialización con diferentes tipos de valor
 func TestSerializarDeserializarGob_MedicionTodosTipos(t *testing.T) {
-	testCases := []struct {
+	casosDePrueba := []struct {
 		nombre string
 		valor  interface{}
 	}{
@@ -59,7 +59,7 @@ func TestSerializarDeserializarGob_MedicionTodosTipos(t *testing.T) {
 		{"Text", "sensor_value"},
 	}
 
-	for _, tc := range testCases {
+	for _, tc := range casosDePrueba {
 		t.Run(tc.nombre, func(t *testing.T) {
 			original := Medicion{
 				Tiempo: time.Now().UnixNano(),
