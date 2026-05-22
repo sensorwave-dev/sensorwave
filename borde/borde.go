@@ -6,6 +6,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cockroachdb/pebble"
@@ -21,12 +22,10 @@ type GestorBorde struct {
 	tags          map[string]string // Metadatos libres del nodo (nombre, ubicación, etc.)
 	db            *pebble.DB        // Base de datos Pebble local
 	cache         *Cache            // Cache en memoria de configuraciones de series
-	buffers       sync.Map          // Map de buffers de series en memoria
+	coordinadores sync.Map          // Map de coordinadores de series (gestión de compresión)
 	mu            sync.RWMutex      // Mutex para proteger el contador
 	contador      int               // Contador para generar IDs únicos de series
-	MotorReglas   *MotorReglas      // Motor de reglas integrado
-	tamañoBuffer  int               // Tamaño del buffer de canales (default 1000)
-	timeoutBuffer int64             // Timeout para inserción en nanosegundos (default 100ms)
+	motorReglas   *MotorReglas      // Motor de reglas integrado
 	finalizado    chan struct{}     // Canal para señalizar cierre del gestor
 }
 
@@ -35,25 +34,324 @@ type Cache struct {
 	mu    sync.RWMutex           // Mutex para proteger el acceso concurrente
 }
 
-type BufferSerie struct {
-	datos      []tipos.Medicion    // Arreglo con TamañoBloque elementos
-	serie      tipos.Serie         // Configuración de la serie
-	indice     int                 // Índice actual en el buffer
-	mu         sync.Mutex          // Mutex para proteger el buffer
-	finalizado chan struct{}       // Canal para señalar cierre del hilo
-	datosCanal chan tipos.Medicion // Canal para recibir nuevos datos
+type CoordinadorSerie struct {
+	serie               tipos.Serie   // Configuración de la serie
+	mu                  sync.Mutex    // Mutex para proteger el acceso al coordinador
+	contador            atomic.Int64  // Contador de puntos pendientes de compresión
+	finalizado          chan struct{} // Canal para señalar cierre del hilo
+	notificarCompresion chan struct{} // Canal para notificar necesidad de compresión
+}
+
+// incrementarContador incrementa el contador de puntos en ingesta
+func (cs *CoordinadorSerie) incrementarContador() int {
+	return int(cs.contador.Add(1))
+}
+
+// decrementarContador decrementa el contador de puntos en ingesta
+func (cs *CoordinadorSerie) decrementarContador(n int) {
+	if n <= 0 {
+		return
+	}
+
+	for {
+		actual := cs.contador.Load()
+		nuevo := actual - int64(n)
+		if nuevo < 0 {
+			nuevo = 0
+		}
+		if cs.contador.CompareAndSwap(actual, nuevo) {
+			return
+		}
+	}
+}
+
+// escribirPuntoIngesta escribe un punto al espacio de nombres de ingesta de una serie
+func (me *GestorBorde) escribirPuntoIngesta(serieId int, medicion tipos.Medicion) error {
+	clave := fmt.Sprintf("ingesta/%010d/%020d", serieId, medicion.Tiempo)
+	datos, err := tipos.SerializarGob(medicion)
+	if err != nil {
+		return fmt.Errorf("error al serializar medición: %v", err)
+	}
+	return me.db.Set([]byte(clave), datos, pebble.Sync)
+}
+
+// leerPuntosIngesta lee los N puntos más antiguos del espacio de nombres de ingesta de una serie
+func (me *GestorBorde) leerPuntosIngesta(serieId int, n int) ([]tipos.Medicion, error) {
+	prefijo := fmt.Sprintf("ingesta/%010d/", serieId)
+	iter, err := me.db.NewIter(&pebble.IterOptions{
+		LowerBound: []byte(prefijo),
+		UpperBound: []byte(fmt.Sprintf("ingesta/%010d0", serieId)),
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer iter.Close()
+
+	var mediciones []tipos.Medicion
+	for iter.First(); iter.Valid() && len(mediciones) < n; iter.Next() {
+		var medicion tipos.Medicion
+		if err := tipos.DeserializarGob(iter.Value(), &medicion); err != nil {
+			continue // Skip mediciones con error
+		}
+		mediciones = append(mediciones, medicion)
+	}
+
+	if err := iter.Error(); err != nil {
+		return nil, err
+	}
+
+	return mediciones, nil
+}
+
+// leerPuntosIngestaEnRango lee todos los puntos de ingesta de una serie en un rango temporal inclusivo.
+func (me *GestorBorde) leerPuntosIngestaEnRango(serieId int, tiempoInicio, tiempoFin int64) ([]tipos.Medicion, error) {
+	if tiempoInicio > tiempoFin {
+		return []tipos.Medicion{}, nil
+	}
+
+	lowerBound := []byte(fmt.Sprintf("ingesta/%010d/%020d", serieId, tiempoInicio))
+	upperBound := []byte(fmt.Sprintf("ingesta/%010d/%020d~", serieId, tiempoFin))
+
+	iter, err := me.db.NewIter(&pebble.IterOptions{
+		LowerBound: lowerBound,
+		UpperBound: upperBound,
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer iter.Close()
+
+	var mediciones []tipos.Medicion
+	for iter.First(); iter.Valid(); iter.Next() {
+		var medicion tipos.Medicion
+		if err := tipos.DeserializarGob(iter.Value(), &medicion); err != nil {
+			continue
+		}
+		mediciones = append(mediciones, medicion)
+	}
+
+	if err := iter.Error(); err != nil {
+		return nil, err
+	}
+
+	return mediciones, nil
+}
+
+// leerUltimoPuntoIngesta retorna la medicion mas reciente en ingesta para una serie.
+func (me *GestorBorde) leerUltimoPuntoIngesta(serieId int) (tipos.Medicion, bool, error) {
+	prefijo := fmt.Sprintf("ingesta/%010d/", serieId)
+	iter, err := me.db.NewIter(&pebble.IterOptions{
+		LowerBound: []byte(prefijo),
+		UpperBound: []byte(fmt.Sprintf("ingesta/%010d0", serieId)),
+	})
+	if err != nil {
+		return tipos.Medicion{}, false, err
+	}
+	defer iter.Close()
+
+	if !iter.Last() {
+		if err := iter.Error(); err != nil {
+			return tipos.Medicion{}, false, err
+		}
+		return tipos.Medicion{}, false, nil
+	}
+
+	var medicion tipos.Medicion
+	if err := tipos.DeserializarGob(iter.Value(), &medicion); err != nil {
+		return tipos.Medicion{}, false, err
+	}
+
+	return medicion, true, nil
+}
+
+// eliminarPuntosIngesta elimina un conjunto de puntos del espacio de nombres de ingesta usando un batch
+func (me *GestorBorde) eliminarPuntosIngesta(serieId int, timestamps []int64) error {
+	batch := me.db.NewBatch()
+	defer batch.Close()
+
+	for _, timestamp := range timestamps {
+		clave := []byte(fmt.Sprintf("ingesta/%010d/%020d", serieId, timestamp))
+		if err := batch.Delete(clave, nil); err != nil {
+			return err
+		}
+	}
+
+	return me.db.Apply(batch, pebble.Sync)
+}
+
+// contarPuntosIngesta cuenta los puntos en el espacio de nombres de ingesta de una serie
+func (me *GestorBorde) contarPuntosIngesta(serieId int) int {
+	prefijo := fmt.Sprintf("ingesta/%010d/", serieId)
+	iter, err := me.db.NewIter(&pebble.IterOptions{
+		LowerBound: []byte(prefijo),
+		UpperBound: []byte(fmt.Sprintf("ingesta/%010d0", serieId)),
+	})
+	if err != nil {
+		return 0
+	}
+	defer iter.Close()
+
+	count := 0
+	for iter.First(); iter.Valid(); iter.Next() {
+		count++
+	}
+	return count
+}
+
+// reconstruirContadoresIngesta reconstruye los contadores de ingesta al iniciar
+func (me *GestorBorde) reconstruirContadoresIngesta() error {
+	me.coordinadores.Range(func(clave, valor interface{}) bool {
+		cs := valor.(*CoordinadorSerie)
+		count := me.contarPuntosIngesta(cs.serie.SerieId)
+		if count > 0 {
+			cs.contador.Store(int64(count))
+			// Si hay suficientes puntos, notificar compresión
+			if count >= cs.serie.TamañoBloque {
+				select {
+				case cs.notificarCompresion <- struct{}{}:
+				default:
+				}
+			}
+		}
+		return true
+	})
+	return nil
+}
+
+// extraerTimestamps extrae los timestamps de un slice de mediciones
+func extraerTimestamps(mediciones []tipos.Medicion) []int64 {
+	timestamps := make([]int64, len(mediciones))
+	for i, m := range mediciones {
+		timestamps[i] = m.Tiempo
+	}
+	return timestamps
+}
+
+// comprimirPuntos comprime un slice de mediciones según la configuración de la serie
+func (me *GestorBorde) comprimirPuntos(mediciones []tipos.Medicion, serie tipos.Serie) ([]byte, error) {
+	if len(mediciones) == 0 {
+		return nil, fmt.Errorf("no hay mediciones para comprimir")
+	}
+
+	// NIVEL 1: Compresión específica
+	// Tiempo: SIEMPRE usar DeltaDelta
+	tiemposComprimidos := compresor.CompresionDeltaDeltaTiempo(mediciones)
+
+	// Valores: usar compresión configurada según tipo de datos
+	valores := compresor.ExtraerValores(mediciones)
+	var valoresComprimidos []byte
+	var err error
+
+	switch serie.TipoDatos {
+	case tipos.Integer:
+		valoresInt, errConv := compresor.ConvertirAInt64Array(valores)
+		if errConv != nil {
+			return nil, errConv
+		}
+
+		switch serie.CompresionBytes {
+		case tipos.DeltaDelta:
+			comp := &compresor.CompresorDeltaDeltaGenerico[int64]{}
+			valoresComprimidos, err = comp.Comprimir(valoresInt)
+		case tipos.RLE:
+			comp := &compresor.CompresorRLEGenerico[int64]{}
+			valoresComprimidos, err = comp.Comprimir(valoresInt)
+		case tipos.Bits:
+			comp := &compresor.CompresorBitsGenerico[int64]{}
+			valoresComprimidos, err = comp.Comprimir(valoresInt)
+		case tipos.SinCompresion:
+			comp := &compresor.CompresorNingunoGenerico[int64]{}
+			valoresComprimidos, err = comp.Comprimir(valoresInt)
+		default:
+			return nil, fmt.Errorf("compresión no soportada para tipo Integer: %v", serie.CompresionBytes)
+		}
+
+	case tipos.Real:
+		valoresFloat, errConv := compresor.ConvertirAFloat64Array(valores)
+		if errConv != nil {
+			return nil, errConv
+		}
+
+		switch serie.CompresionBytes {
+		case tipos.DeltaDelta:
+			comp := &compresor.CompresorDeltaDeltaGenerico[float64]{}
+			valoresComprimidos, err = comp.Comprimir(valoresFloat)
+		case tipos.Xor:
+			comp := &compresor.CompresorXor{}
+			valoresComprimidos, err = comp.Comprimir(valoresFloat)
+		case tipos.RLE:
+			comp := &compresor.CompresorRLEGenerico[float64]{}
+			valoresComprimidos, err = comp.Comprimir(valoresFloat)
+		case tipos.SinCompresion:
+			comp := &compresor.CompresorNingunoGenerico[float64]{}
+			valoresComprimidos, err = comp.Comprimir(valoresFloat)
+		default:
+			return nil, fmt.Errorf("compresión no soportada para tipo Real: %v", serie.CompresionBytes)
+		}
+
+	case tipos.Boolean:
+		valoresBool, errConv := compresor.ConvertirABoolArray(valores)
+		if errConv != nil {
+			return nil, errConv
+		}
+
+		switch serie.CompresionBytes {
+		case tipos.RLE:
+			comp := &compresor.CompresorRLEGenerico[bool]{}
+			valoresComprimidos, err = comp.Comprimir(valoresBool)
+		case tipos.SinCompresion:
+			comp := &compresor.CompresorNingunoGenerico[bool]{}
+			valoresComprimidos, err = comp.Comprimir(valoresBool)
+		default:
+			return nil, fmt.Errorf("compresión no soportada para tipo Boolean: %v", serie.CompresionBytes)
+		}
+
+	case tipos.Text:
+		valoresStr, errConv := compresor.ConvertirAStringArray(valores)
+		if errConv != nil {
+			return nil, errConv
+		}
+
+		switch serie.CompresionBytes {
+		case tipos.Diccionario:
+			comp := &compresor.CompresorDiccionario{}
+			valoresComprimidos, err = comp.Comprimir(valoresStr)
+		case tipos.RLE:
+			comp := &compresor.CompresorRLEGenerico[string]{}
+			valoresComprimidos, err = comp.Comprimir(valoresStr)
+		case tipos.SinCompresion:
+			comp := &compresor.CompresorNingunoGenerico[string]{}
+			valoresComprimidos, err = comp.Comprimir(valoresStr)
+		default:
+			return nil, fmt.Errorf("compresión no soportada para tipo Text: %v", serie.CompresionBytes)
+		}
+
+	default:
+		return nil, fmt.Errorf("tipo de datos no soportado: %v", serie.TipoDatos)
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	// Combinar datos del nivel 1
+	bloqueNivel1 := compresor.CombinarDatos(tiemposComprimidos, valoresComprimidos)
+
+	// NIVEL 2: Compresión de bloque
+	compresorBloque := compresor.ObtenerCompresorBloque(serie.CompresionBloque)
+	bloqueFinal, _ := compresorBloque.Comprimir(bloqueNivel1)
+
+	return bloqueFinal, nil
 }
 
 // Opciones configura la creación de un GestorBorde.
 // ConfigS3 es opcional (nil = modo desconectado sin sincronización con nube).
 type Opciones struct {
-	NombreDB      string                 // Nombre de la base de datos Pebble (requerido)
-	Direccion     string                 // Dirección pública para API REST (se debe pasar, SensorWave es agnóstico en cuanto a que se usa)
-	PuertoHTTP    string                 // Puerto HTTP para API REST (requerido solo si ConfigS3 != nil)
-	ConfigS3      *tipos.ConfiguracionS3 // nil = modo local sin nube (debe ser explícito si se usa)
-	TamañoBuffer  int                    // Tamaño del canal de buffer por serie (default: 1000)
-	TimeoutBuffer int64                  // Timeout en nanosegundos para inserción (default: 100ms)
-	Tags          map[string]string      // Metadatos libres del nodo (nombre, ubicación, etc.)
+	NombreDB   string                 // Nombre de la base de datos Pebble (requerido)
+	Direccion  string                 // Dirección pública para API REST (se debe pasar, SensorWave es agnóstico en cuanto a que se usa)
+	PuertoHTTP string                 // Puerto HTTP para API REST (requerido solo si ConfigS3 != nil)
+	ConfigS3   *tipos.ConfiguracionS3 // nil = modo local sin nube (debe ser explícito si se usa)
+	Tags       map[string]string      // Metadatos libres del nodo (nombre, ubicación, etc.)
 }
 
 // Crear inicializa el GestorBorde con las opciones especificadas.
@@ -90,17 +388,6 @@ func Crear(opts Opciones) (*GestorBorde, error) {
 		}
 	}
 
-	// Aplicar defaults para buffer
-	tamañoBuffer := opts.TamañoBuffer
-	if tamañoBuffer <= 0 {
-		tamañoBuffer = 1000 // Default: 1000 mediciones por serie
-	}
-
-	timeoutBuffer := opts.TimeoutBuffer
-	if timeoutBuffer <= 0 {
-		timeoutBuffer = 100 * 1000 * 1000 // Default: 100ms en nanosegundos
-	}
-
 	// Abrir o crear la base de datos Pebble local
 	db, err := pebble.Open(opts.NombreDB, &pebble.Options{})
 	if err != nil {
@@ -109,23 +396,21 @@ func Crear(opts Opciones) (*GestorBorde, error) {
 
 	// Inicializar el GestorBorde (datos básicos)
 	gestor := &GestorBorde{
-		db:            db,
-		direccion:     opts.Direccion,
-		puertoHTTP:    puertoHTTP,
-		tags:          opts.Tags,
-		cache:         &Cache{datos: make(map[string]tipos.Serie)},
-		finalizado:    make(chan struct{}),
-		contador:      0,
-		tamañoBuffer:  tamañoBuffer,
-		timeoutBuffer: timeoutBuffer,
+		db:         db,
+		direccion:  opts.Direccion,
+		puertoHTTP: puertoHTTP,
+		tags:       opts.Tags,
+		cache:      &Cache{datos: make(map[string]tipos.Serie)},
+		finalizado: make(chan struct{}),
+		contador:   0,
 	}
 
 	// Cargar o generar nodoID
-	nodoIDBytes, closer, err := db.Get([]byte("meta/nodo_id"))
+	nodoIDBytes, closer, err := db.Get([]byte("metadatos/nodo_id"))
 	// Si no existe, generar uno nuevo
 	if err == pebble.ErrNotFound {
 		gestor.nodoID = generarNodoID()
-		err = db.Set([]byte("meta/nodo_id"), []byte(gestor.nodoID), pebble.Sync)
+		err = db.Set([]byte("metadatos/nodo_id"), []byte(gestor.nodoID), pebble.Sync)
 		if err != nil {
 			return &GestorBorde{}, fmt.Errorf("error al guardar nodo_id: %v", err)
 		}
@@ -148,7 +433,7 @@ func Crear(opts Opciones) (*GestorBorde, error) {
 		if err != nil {
 			return &GestorBorde{}, fmt.Errorf("error al serializar tags: %v", err)
 		}
-		err = db.Set([]byte("meta/tags"), tagsBytes, pebble.Sync)
+		err = db.Set([]byte("metadatos/tags"), tagsBytes, pebble.Sync)
 		if err != nil {
 			return &GestorBorde{}, fmt.Errorf("error al guardar tags: %v", err)
 		}
@@ -156,7 +441,7 @@ func Crear(opts Opciones) (*GestorBorde, error) {
 		log.Printf("Tags actualizados: %v", opts.Tags)
 	} else {
 		// Cargar tags existentes desde PebbleDB
-		tagsBytes, closer, err := db.Get([]byte("meta/tags"))
+		tagsBytes, closer, err := db.Get([]byte("metadatos/tags"))
 		if err == nil {
 			var tagsGuardados map[string]string
 			if err := tipos.DeserializarGob(tagsBytes, &tagsGuardados); err == nil {
@@ -171,7 +456,7 @@ func Crear(opts Opciones) (*GestorBorde, error) {
 	}
 
 	// Cargar contador de series desde PebbleDB
-	contadorBytes, closer, err := db.Get([]byte("meta/contador"))
+	contadorBytes, closer, err := db.Get([]byte("metadatos/contador"))
 	if err != nil && err != pebble.ErrNotFound {
 		return &GestorBorde{}, fmt.Errorf("error al leer contador: %v", err)
 	}
@@ -189,6 +474,12 @@ func Crear(opts Opciones) (*GestorBorde, error) {
 		return &GestorBorde{}, fmt.Errorf("error al cargar series: %v", err)
 	}
 
+	// Reconstruir contadores de ingesta desde Pebble
+	err = gestor.reconstruirContadoresIngesta()
+	if err != nil {
+		return &GestorBorde{}, fmt.Errorf("error al reconstruir contadores de ingesta: %v", err)
+	}
+
 	// Configurar S3 si se proporciona configuración
 	if opts.ConfigS3 != nil {
 		// Aplicar defaults y validar
@@ -197,7 +488,7 @@ func Crear(opts Opciones) (*GestorBorde, error) {
 			return &GestorBorde{}, fmt.Errorf("configuración S3 inválida: %w", err)
 		}
 
-		err = gestor.ConfigurarS3(*opts.ConfigS3)
+		err = gestor.configurarS3(*opts.ConfigS3)
 		if err != nil {
 			log.Printf("Advertencia: error al configurar S3: %v", err)
 			log.Printf("El nodo funcionará en modo local")
@@ -207,28 +498,32 @@ func Crear(opts Opciones) (*GestorBorde, error) {
 	}
 
 	// Inicializar el motor de reglas integrado
-	gestor.MotorReglas = nuevoMotorReglasIntegrado(gestor, db)
+	gestor.motorReglas = nuevoMotorReglasIntegrado(gestor, db)
 	// Cargar reglas existentes
-	err = gestor.MotorReglas.cargarReglasExistentes()
+	err = gestor.motorReglas.cargarReglasExistentes()
 	if err != nil {
 		return &GestorBorde{}, fmt.Errorf("error al cargar reglas: %v", err)
 	}
 
 	// Si S3 está configurado y se pudo conectar, registrar el nodo (incluye reglas)
 	if clienteS3 != nil {
-		if err := gestor.RegistrarEnS3(); err != nil {
+		if err := gestor.registrarEnS3(); err != nil {
 			log.Printf("Advertencia: error registrando nodo en S3: %v", err)
 		}
 		// Iniciar limpieza automática de S3 (eliminaciones pendientes)
-		gestor.IniciarLimpiezaS3Automatica()
+		gestor.iniciarLimpiezaS3Automatica()
 	}
 
 	// Iniciar servidor HTTP solo si hay puerto configurado (modo conectado con S3)
 	if puertoHTTP != "" {
-		listoHTTP := gestor.iniciarServidorHTTP()
+		listoHTTP, err := gestor.iniciarServidorHTTP()
+		if err != nil {
+    		db.Close()
+    		return nil, fmt.Errorf("modo borde-nube requiere servidor HTTP: %w", err)
+		}
 		<-listoHTTP
 	}
-
+	
 	return gestor, nil
 }
 
@@ -247,7 +542,7 @@ func (me *GestorBorde) ObtenerTags() map[string]string {
 func (me *GestorBorde) ActualizarTags(tags map[string]string) error {
 	if tags == nil {
 		// Eliminar tags de PebbleDB
-		err := me.db.Delete([]byte("meta/tags"), pebble.Sync)
+		err := me.db.Delete([]byte("metadatos/tags"), pebble.Sync)
 		if err != nil && err != pebble.ErrNotFound {
 			return fmt.Errorf("error al eliminar tags: %v", err)
 		}
@@ -259,7 +554,7 @@ func (me *GestorBorde) ActualizarTags(tags map[string]string) error {
 		if err != nil {
 			return fmt.Errorf("error al serializar tags: %v", err)
 		}
-		err = me.db.Set([]byte("meta/tags"), tagsBytes, pebble.Sync)
+		err = me.db.Set([]byte("metadatos/tags"), tagsBytes, pebble.Sync)
 		if err != nil {
 			return fmt.Errorf("error al guardar tags: %v", err)
 		}
@@ -267,10 +562,10 @@ func (me *GestorBorde) ActualizarTags(tags map[string]string) error {
 		log.Printf("Tags actualizados: %v", tags)
 	}
 
-	// Actualizar registro en S3 si está configurado
+	// Sincronizar registro en S3 en modo best-effort
 	if clienteS3 != nil {
-		if err := me.RegistrarEnS3(); err != nil {
-			log.Printf("Advertencia: error actualizando tags en S3: %v", err)
+		if err := me.registrarEnS3(); err != nil {
+			log.Printf("Advertencia: error actualizando tags en registro S3: %v", err)
 		}
 	}
 
@@ -316,17 +611,15 @@ func (me *GestorBorde) cargarSeriesExistentes() error {
 		me.cache.datos[seriesPath] = config
 		me.cache.mu.Unlock()
 
-		// Crear buffer y goroutine para cada serie
-		serieBuffer := &BufferSerie{
-			datos:      make([]tipos.Medicion, config.TamañoBloque),
-			serie:      config,
-			indice:     0,
-			finalizado: make(chan struct{}),
-			datosCanal: make(chan tipos.Medicion, me.tamañoBuffer),
+		// Crear coordinador y goroutine para cada serie
+		coordinador := &CoordinadorSerie{
+			serie:               config,
+			finalizado:          make(chan struct{}),
+			notificarCompresion: make(chan struct{}, 1),
 		}
 
-		me.buffers.Store(seriesPath, serieBuffer)
-		go me.manejarBuffer(serieBuffer)
+		me.coordinadores.Store(seriesPath, coordinador)
+		go me.coordinarCompresion(coordinador)
 	}
 
 	return iter.Error()
@@ -337,10 +630,10 @@ func (me *GestorBorde) Cerrar() {
 	// Señalar a todos los goroutines que deben terminar
 	close(me.finalizado)
 
-	// Cerrar todos los buffers individuales
-	me.buffers.Range(func(clave, valor interface{}) bool {
-		buffer := valor.(*BufferSerie)
-		close(buffer.finalizado)
+	// Cerrar todos los coordinadores individuales
+	me.coordinadores.Range(func(clave, valor interface{}) bool {
+		cs := valor.(*CoordinadorSerie)
+		close(cs.finalizado)
 		return true
 	})
 
@@ -432,7 +725,7 @@ func (me *GestorBorde) CrearSerie(config tipos.Serie) error {
 	// Actualizar contador en PebbleDB
 	contadorBytes := make([]byte, 4)
 	binary.LittleEndian.PutUint32(contadorBytes, uint32(me.contador))
-	err = me.db.Set([]byte("meta/contador"), contadorBytes, pebble.Sync)
+	err = me.db.Set([]byte("metadatos/contador"), contadorBytes, pebble.Sync)
 	me.mu.Unlock()
 
 	if err != nil {
@@ -455,21 +748,19 @@ func (me *GestorBorde) CrearSerie(config tipos.Serie) error {
 	me.cache.datos[string(serieClave)] = config
 	me.cache.mu.Unlock()
 
-	// Crear buffer y goroutine para la nueva serie
-	buffer := &BufferSerie{
-		datos:      make([]tipos.Medicion, config.TamañoBloque),
-		serie:      config,
-		indice:     0,
-		finalizado: make(chan struct{}),
-		datosCanal: make(chan tipos.Medicion, me.tamañoBuffer),
+	// Crear coordinador y goroutine para la nueva serie
+	coordinador := &CoordinadorSerie{
+		serie:               config,
+		finalizado:          make(chan struct{}),
+		notificarCompresion: make(chan struct{}, 1),
 	}
 
-	me.buffers.Store(serieClave, buffer)
-	go me.manejarBuffer(buffer)
+	me.coordinadores.Store(serieClave, coordinador)
+	go me.coordinarCompresion(coordinador)
 
 	// Registrar nodo actualizado en S3 si está configurado
 	if clienteS3 != nil {
-		err = me.RegistrarEnS3()
+		err = me.registrarEnS3()
 		if err != nil {
 			log.Printf("Error registrando serie nueva en S3: %v", err)
 		}
@@ -478,50 +769,77 @@ func (me *GestorBorde) CrearSerie(config tipos.Serie) error {
 	return nil
 }
 
-// manejarBuffer maneja la inserción y almacenamiento de datos en el buffer de una serie
-func (me *GestorBorde) manejarBuffer(buffer *BufferSerie) {
+// coordinarCompresion coordina la compresión asíncrona de datos desde el WAL
+func (me *GestorBorde) coordinarCompresion(cs *CoordinadorSerie) {
 	for {
 		select {
-		case <-buffer.finalizado:
+		case <-cs.finalizado:
 			return
 		case <-me.finalizado:
 			return
-		case medicion := <-buffer.datosCanal:
-			buffer.mu.Lock()
-			// Agregar la medición al buffer
-			buffer.datos[buffer.indice] = medicion
-			buffer.indice++
+		case <-cs.notificarCompresion:
+			cs.mu.Lock()
 
-			// Verificar si el buffer está lleno
-			if buffer.indice >= buffer.serie.TamañoBloque {
-				// Comprimir y almacenar el buffer
-				me.comprimirYAlmacenar(buffer)
-				// Limpiar el buffer
-				buffer.indice = 0
-				// Limpiar los datos (opcional, se sobreescribirán)
-				for i := range buffer.datos {
-					buffer.datos[i] = tipos.Medicion{}
-				}
+			// Leer puntos del WAL
+			puntos, err := me.leerPuntosIngesta(cs.serie.SerieId, cs.serie.TamañoBloque)
+			if err != nil || len(puntos) == 0 {
+				cs.mu.Unlock()
+				continue
 			}
-			buffer.mu.Unlock()
+
+			// Comprimir puntos
+			bloqueComprimido, err := me.comprimirPuntos(puntos, cs.serie)
+			if err != nil {
+				fmt.Printf("Error al comprimir puntos para serie %s: %v\n", cs.serie.Path, err)
+				cs.mu.Unlock()
+				continue
+			}
+
+			// Escribir bloque comprimido
+			tiempoInicio := puntos[0].Tiempo
+			tiempoFinal := puntos[len(puntos)-1].Tiempo
+			clave := generarClaveDatos(cs.serie.SerieId, tiempoInicio, tiempoFinal)
+			err = me.db.Set(clave, bloqueComprimido, pebble.Sync)
+			if err != nil {
+				fmt.Printf("Error al escribir bloque para serie %s: %v\n", cs.serie.Path, err)
+				cs.mu.Unlock()
+				continue
+			}
+
+			fmt.Println("Almacenando bloque para serie:", cs.serie.Path,
+				"Tiempo inicio:", tiempoInicio,
+				"Tiempo final:", tiempoFinal,
+				"Mediciones:", len(puntos),
+				"Tamaño comprimido:", len(bloqueComprimido))
+
+			// Eliminar puntos del WAL
+			timestamps := extraerTimestamps(puntos)
+			if err := me.eliminarPuntosIngesta(cs.serie.SerieId, timestamps); err != nil {
+				fmt.Printf("Error al eliminar puntos del WAL para serie %s: %v\n", cs.serie.Path, err)
+			}
+
+			// Decrementar contador
+			cs.decrementarContador(len(puntos))
+
+			cs.mu.Unlock()
 		}
 	}
 }
 
 // Insertar agrega un nuevo dato a la serie especificada
 func (me *GestorBorde) Insertar(path string, tiempo int64, dato interface{}) error {
-	// Obtener el buffer para la serie
-	bufferInterface, ok := me.buffers.Load(path)
+	// Obtener el coordinador para la serie
+	csInterface, ok := me.coordinadores.Load(path)
 	if !ok {
 		return fmt.Errorf("serie no encontrada: %s", path)
 	}
 
-	buffer := bufferInterface.(*BufferSerie)
+	cs := csInterface.(*CoordinadorSerie)
 
 	// Validar compatibilidad de tipo
-	if !esCompatibleConTipo(dato, buffer.serie.TipoDatos) {
+	if !esCompatibleConTipo(dato, cs.serie.TipoDatos) {
 		return fmt.Errorf("tipo de dato incompatible: esperado %s, recibido %T",
-			buffer.serie.TipoDatos, dato)
+			cs.serie.TipoDatos, dato)
 	}
 
 	// Crear la medición con tiempo y valor
@@ -530,16 +848,26 @@ func (me *GestorBorde) Insertar(path string, tiempo int64, dato interface{}) err
 		Valor:  dato,
 	}
 
-	// Enviar la medición al canal del buffer con timeout
-	select {
-	case buffer.datosCanal <- medicion:
-		// Evaluar reglas de forma síncrona después de inserción exitosa
-		me.MotorReglas.evaluarReglas(time.Unix(0, tiempo))
-		return nil
-	case <-time.After(time.Duration(me.timeoutBuffer)):
-		return fmt.Errorf("timeout (%v): buffer saturado para serie %s",
-			time.Duration(me.timeoutBuffer), path)
+	// 1. Escribir a ingesta (persistencia inmediata)
+	if err := me.escribirPuntoIngesta(cs.serie.SerieId, medicion); err != nil {
+		return fmt.Errorf("error al escribir punto a ingesta: %v", err)
 	}
+
+	// 2. Incrementar contador
+	contador := cs.incrementarContador()
+
+	// 3. Si contador >= TamañoBloque, notificar para comprimir
+	if contador >= cs.serie.TamañoBloque {
+		select {
+		case cs.notificarCompresion <- struct{}{}:
+		default: // ya hay notificación pendiente
+		}
+	}
+
+	// 4. Evaluar reglas
+	me.motorReglas.evaluarReglas(time.Unix(0, tiempo))
+
+	return nil
 }
 
 // descomprimirBloque descomprime un bloque de datos usando la función pública del compresor
@@ -547,192 +875,46 @@ func (me *GestorBorde) descomprimirBloque(datosComprimidos []byte, serie tipos.S
 	return compresor.DescomprimirBloqueSerie(datosComprimidos, serie.TipoDatos, serie.CompresionBytes, serie.CompresionBloque)
 }
 
-func (me *GestorBorde) comprimirYAlmacenar(buffer *BufferSerie) {
-	// Obtener mediciones válidas del buffer
-	mediciones := buffer.datos[:buffer.indice]
-	if len(mediciones) == 0 {
-		return
-	}
-
-	// NIVEL 1: Compresión específica
-	// Tiempo: SIEMPRE usar DeltaDelta
-	tiemposComprimidos := compresor.CompresionDeltaDeltaTiempo(mediciones)
-
-	// Valores: usar compresión configurada según tipo de datos
-	valores := compresor.ExtraerValores(mediciones)
-	var valoresComprimidos []byte
-	var err error
-
-	switch buffer.serie.TipoDatos {
-	case tipos.Integer:
-		// Convertir valores a int64
-		valoresInt, errConv := compresor.ConvertirAInt64Array(valores)
-		if errConv != nil {
-			fmt.Printf("Error al convertir valores a int64: %v\n", errConv)
-			return
-		}
-
-		// Comprimir según algoritmo configurado
-		switch buffer.serie.CompresionBytes {
-		case tipos.DeltaDelta:
-			comp := &compresor.CompresorDeltaDeltaGenerico[int64]{}
-			valoresComprimidos, err = comp.Comprimir(valoresInt)
-		case tipos.RLE:
-			comp := &compresor.CompresorRLEGenerico[int64]{}
-			valoresComprimidos, err = comp.Comprimir(valoresInt)
-		case tipos.Bits:
-			comp := &compresor.CompresorBitsGenerico[int64]{}
-			valoresComprimidos, err = comp.Comprimir(valoresInt)
-		case tipos.SinCompresion:
-			comp := &compresor.CompresorNingunoGenerico[int64]{}
-			valoresComprimidos, err = comp.Comprimir(valoresInt)
-		default:
-			fmt.Printf("Compresión no soportada para tipo Integer: %v\n", buffer.serie.CompresionBytes)
-			return
-		}
-
-	case tipos.Real:
-		// Convertir valores a float64
-		valoresFloat, errConv := compresor.ConvertirAFloat64Array(valores)
-		if errConv != nil {
-			fmt.Printf("Error al convertir valores a float64: %v\n", errConv)
-			return
-		}
-
-		// Comprimir según algoritmo configurado
-		switch buffer.serie.CompresionBytes {
-		case tipos.DeltaDelta:
-			comp := &compresor.CompresorDeltaDeltaGenerico[float64]{}
-			valoresComprimidos, err = comp.Comprimir(valoresFloat)
-		case tipos.Xor:
-			comp := &compresor.CompresorXor{}
-			valoresComprimidos, err = comp.Comprimir(valoresFloat)
-		case tipos.RLE:
-			comp := &compresor.CompresorRLEGenerico[float64]{}
-			valoresComprimidos, err = comp.Comprimir(valoresFloat)
-		case tipos.SinCompresion:
-			comp := &compresor.CompresorNingunoGenerico[float64]{}
-			valoresComprimidos, err = comp.Comprimir(valoresFloat)
-		default:
-			fmt.Printf("Compresión no soportada para tipo Real: %v\n", buffer.serie.CompresionBytes)
-			return
-		}
-
-	case tipos.Boolean:
-		// Convertir valores a bool
-		valoresBool, errConv := compresor.ConvertirABoolArray(valores)
-		if errConv != nil {
-			fmt.Printf("Error al convertir valores a bool: %v\n", errConv)
-			return
-		}
-
-		// Comprimir según algoritmo configurado
-		switch buffer.serie.CompresionBytes {
-		case tipos.RLE:
-			comp := &compresor.CompresorRLEGenerico[bool]{}
-			valoresComprimidos, err = comp.Comprimir(valoresBool)
-		case tipos.SinCompresion:
-			comp := &compresor.CompresorNingunoGenerico[bool]{}
-			valoresComprimidos, err = comp.Comprimir(valoresBool)
-		default:
-			fmt.Printf("Compresión no soportada para tipo Boolean: %v\n", buffer.serie.CompresionBytes)
-			return
-		}
-
-	case tipos.Text:
-		// Convertir valores a string
-		valoresStr, errConv := compresor.ConvertirAStringArray(valores)
-		if errConv != nil {
-			fmt.Printf("Error al convertir valores a string: %v\n", errConv)
-			return
-		}
-
-		// Comprimir según algoritmo configurado
-		switch buffer.serie.CompresionBytes {
-		case tipos.Diccionario:
-			comp := &compresor.CompresorDiccionario{}
-			valoresComprimidos, err = comp.Comprimir(valoresStr)
-		case tipos.RLE:
-			comp := &compresor.CompresorRLEGenerico[string]{}
-			valoresComprimidos, err = comp.Comprimir(valoresStr)
-		case tipos.SinCompresion:
-			comp := &compresor.CompresorNingunoGenerico[string]{}
-			valoresComprimidos, err = comp.Comprimir(valoresStr)
-		default:
-			fmt.Printf("Compresión no soportada para tipo Text: %v\n", buffer.serie.CompresionBytes)
-			return
-		}
-
-	default:
-		fmt.Printf("Tipo de datos no soportado: %v\n", buffer.serie.TipoDatos)
-		return
-	}
-
-	if err != nil {
-		fmt.Printf("Error al comprimir valores: %v\n", err)
-		return
-	}
-
-	// Combinar datos del nivel 1
-	bloqueNivel1 := compresor.CombinarDatos(tiemposComprimidos, valoresComprimidos)
-
-	// NIVEL 2: Compresión de bloque
-	compresorBloque := compresor.ObtenerCompresorBloque(buffer.serie.CompresionBloque)
-	bloqueFinal, _ := compresorBloque.Comprimir(bloqueNivel1)
-
-	// Calcular timestamps de inicio y fin
-	tiempoInicio := mediciones[0].Tiempo
-	tiempoFinal := mediciones[len(mediciones)-1].Tiempo
-
-	fmt.Println("Almacenando bloque para serie:", buffer.serie.Path,
-		"Tiempo inicio:", tiempoInicio,
-		"Tiempo final:", tiempoFinal,
-		"Mediciones:", len(mediciones),
-		"Tamaño comprimido:", len(bloqueFinal))
-
-	// Escribir directamente a PebbleDB (sin serialización)
-	clave := generarClaveDatos(buffer.serie.SerieId, tiempoInicio, tiempoFinal)
-	err = me.db.Set(clave, bloqueFinal, pebble.Sync)
-	if err != nil {
-		fmt.Printf("Error al escribir datos para serie %s: %v\n", buffer.serie.Path, err)
-	}
-}
-
 func (me *GestorBorde) AgregarRegla(regla *Regla) error {
-	return me.MotorReglas.AgregarRegla(regla)
+	return me.motorReglas.AgregarRegla(regla)
 }
 
 func (me *GestorBorde) EliminarRegla(id string) error {
-	return me.MotorReglas.EliminarRegla(id)
+	return me.motorReglas.EliminarRegla(id)
 }
 
 func (me *GestorBorde) ActualizarRegla(regla *Regla) error {
-	return me.MotorReglas.ActualizarRegla(regla)
+	return me.motorReglas.ActualizarRegla(regla)
 }
 
 func (me *GestorBorde) HabilitarRegla(id string, habilitada bool) error {
-	return me.MotorReglas.HabilitarRegla(id, habilitada)
+	return me.motorReglas.HabilitarRegla(id, habilitada)
 }
 
 func (me *GestorBorde) RegistrarEjecutor(tipoAccion string, ejecutor EjecutorAccion) error {
-	return me.MotorReglas.RegistrarEjecutor(tipoAccion, ejecutor)
+	return me.motorReglas.RegistrarEjecutor(tipoAccion, ejecutor)
 }
 
 func (me *GestorBorde) ListarReglas() map[string]*Regla {
-	return me.MotorReglas.ListarReglas()
+	return me.motorReglas.ListarReglas()
+}
+
+// ObtenerRegla obtiene una regla por su ID
+func (me *GestorBorde) ObtenerRegla(id string) (*Regla, error) {
+	return me.motorReglas.ObtenerRegla(id)
 }
 
 func (me *GestorBorde) HabilitarMotorReglas(habilitado bool) {
-	me.MotorReglas.Habilitar(habilitado)
+	me.motorReglas.Habilitar(habilitado)
 }
 
 // ObtenerEstadoMotorReglas devuelve el estado actual del motor de reglas
 func (me *GestorBorde) ObtenerEstadoMotorReglas() EstadoMotorReglas {
-	return me.MotorReglas.ObtenerEstado()
+	return me.motorReglas.ObtenerEstado()
 }
 
 // EliminarSerie elimina una serie y todos sus datos asociados.
-// Elimina: metadatos, bloques de datos locales, cache y buffer.
+// Elimina: metadatos, bloques de datos locales y cache.
 // Si S3 está configurado, registra la eliminación pendiente y la procesa (best-effort).
 // La eliminación local siempre se completa; la eliminación de S3 se reintentará automáticamente.
 func (me *GestorBorde) EliminarSerie(path string) error {
@@ -756,29 +938,47 @@ func (me *GestorBorde) EliminarSerie(path string) error {
 		}
 	}
 
-	// 2. Cerrar el buffer y su goroutine
-	if bufferInterface, ok := me.buffers.Load(path); ok {
-		buffer := bufferInterface.(*BufferSerie)
+	// 2. Cerrar el coordinador y su goroutine
+	if csInterface, ok := me.coordinadores.Load(path); ok {
+		cs := csInterface.(*CoordinadorSerie)
 
 		// Señalar al goroutine que termine
-		close(buffer.finalizado)
+		close(cs.finalizado)
 
-		// Vaciar el canal para evitar bloqueos
-		close(buffer.datosCanal)
-		for range buffer.datosCanal {
-			// Drenar el canal
+		// Eliminar del mapa de coordinadores
+		me.coordinadores.Delete(path)
+	}
+
+	// 3. Eliminar puntos del WAL
+	prefijoWAL := fmt.Sprintf("ingesta/%010d/", serieId)
+	iterWAL, err := me.db.NewIter(&pebble.IterOptions{
+		LowerBound: []byte(prefijoWAL),
+		UpperBound: []byte(fmt.Sprintf("ingesta/%010d0", serieId)),
+	})
+	if err != nil {
+		return fmt.Errorf("error al crear iterador para WAL: %v", err)
+	}
+
+	var clavesWAL [][]byte
+	for iterWAL.First(); iterWAL.Valid(); iterWAL.Next() {
+		clave := make([]byte, len(iterWAL.Key()))
+		copy(clave, iterWAL.Key())
+		clavesWAL = append(clavesWAL, clave)
+	}
+	iterWAL.Close()
+
+	for _, clave := range clavesWAL {
+		if err := me.db.Delete(clave, pebble.Sync); err != nil {
+			log.Printf("Advertencia: error al eliminar punto WAL %s: %v", string(clave), err)
 		}
-
-		// Eliminar del mapa de buffers
-		me.buffers.Delete(path)
 	}
 
 	// 3. Eliminar todos los bloques de datos de PebbleDB
-	prefijoDatos := fmt.Sprintf("data/%010d/", serieId)
+	prefijoDatos := fmt.Sprintf("datos/%010d/", serieId)
 
 	iter, err := me.db.NewIter(&pebble.IterOptions{
 		LowerBound: []byte(prefijoDatos),
-		UpperBound: []byte(fmt.Sprintf("data/%010d0", serieId)), // Siguiente serie
+		UpperBound: []byte(fmt.Sprintf("datos/%010d0", serieId)), // Siguiente serie
 	})
 	if err != nil {
 		return fmt.Errorf("error al crear iterador para datos: %v", err)
@@ -813,8 +1013,8 @@ func (me *GestorBorde) EliminarSerie(path string) error {
 
 	log.Printf("Serie eliminada localmente: %s (ID: %d, bloques eliminados: %d)", path, serieId, len(clavesAEliminar))
 
-	// La eliminación de S3 se procesa automáticamente vía IniciarLimpiezaS3Automatica()
-	// que ejecuta ProcesarEliminacionesPendientes() cada 5 minutos.
+	// La eliminación de S3 se procesa automáticamente vía iniciarLimpiezaS3Automatica()
+	// que ejecuta procesarEliminacionesPendientes() cada 5 minutos.
 	// La eliminación pendiente ya fue registrada en el paso 1 (si S3 estaba configurado).
 
 	return nil

@@ -26,7 +26,7 @@ func IniciarMQTT(puerto string) {
 		loggerFatal(LOG_MQTT, "Error - No se pudo conectar al servidor: %v", token.Error())
 	}
 	// Suscribirse al topico "#" (VER SI SE SUSCRIBE A OTRO TOPICO)
-	token := clienteMQTT.Subscribe("#", 2, manejadorMQTT)
+	token := clienteMQTT.Subscribe("#", 1, manejadorMQTT)
 	if token.Wait() && token.Error() != nil {
 		loggerFatal(LOG_MQTT, "Error - No se pudo suscribir al tópico: %v", token.Error())
 	}
@@ -63,6 +63,10 @@ func manejadorMQTT(cliente MQTT.Client, mensajeMQTT MQTT.Message) {
 	}
 	if err := validarQoS(mensaje); err != nil {
 		loggerPrint(LOG_MQTT, "Error - QoS inválido: %v", err)
+		return
+	}
+	if err := validarTamanoPayload(mensaje); err != nil {
+		loggerPrint(LOG_MQTT, "Error - Payload demasiado grande: %v", err)
 		return
 	}
 	if mensajeTopico != topicoMQTT {

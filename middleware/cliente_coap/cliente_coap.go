@@ -15,6 +15,7 @@ import (
 	"github.com/plgd-dev/go-coap/v3/udp"
 	"github.com/plgd-dev/go-coap/v3/udp/client"
 	"github.com/sensorwave-dev/sensorwave/middleware"
+	"github.com/sensorwave-dev/sensorwave/middleware/internal/mensaje"
 )
 
 var ruta string = "/sensorwave"
@@ -37,8 +38,8 @@ type ClienteCoAP struct {
 }
 
 // conectar cliente con backoff exponencial
-func Conectar(direccion string, puerto string) *ClienteCoAP {
-	servidor := direccion + ":" + puerto
+func Conectar(host string, puerto string) *ClienteCoAP {
+	servidor := host + ":" + puerto
 
 	c := &ClienteCoAP{
 		direccion:     servidor,
@@ -78,7 +79,7 @@ func (c *ClienteCoAP) Desconectar() {
 
 // publicar
 func (c *ClienteCoAP) Publicar(topico string, payload interface{}, opciones ...middleware.PublicarOpcion) {
-	mensaje, err := middleware.Construir(topico, payload, opciones...)
+	mensaje, err := mensaje.Construir(topico, payload, opciones...)
 	if err != nil {
 		log.Printf("Error al construir mensaje: %v", err)
 		return

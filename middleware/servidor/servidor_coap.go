@@ -109,6 +109,10 @@ func manejadorCoAP(w mux.ResponseWriter, r *mux.Message) {
 			_ = w.SetResponse(codes.BadRequest, message.TextPlain, bytes.NewReader([]byte("QoS invalido")))
 			return
 		}
+		if err := validarTamanoPayload(mensaje); err != nil {
+			_ = w.SetResponse(codes.RequestEntityTooLarge, message.TextPlain, bytes.NewReader([]byte("Payload demasiado grande")))
+			return
+		}
 		if mensajeTopico != normalizado {
 			_ = w.SetResponse(codes.BadRequest, message.TextPlain, bytes.NewReader([]byte("El tópico del query y del cuerpo no coinciden")))
 			return

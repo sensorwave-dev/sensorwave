@@ -123,7 +123,7 @@ func TestGenerarNodoID(t *testing.T) {
 // TestGenerarClaveDatos verifica formato de claves
 func TestGenerarClaveDatos(t *testing.T) {
 	clave := generarClaveDatos(1, 1000, 2000)
-	assert.Contains(t, string(clave), "data/")
+	assert.Contains(t, string(clave), "datos/")
 	assert.Contains(t, string(clave), "0000000001")
 	t.Log("✓ generarClaveDatos genera claves con formato correcto")
 }
@@ -197,6 +197,7 @@ func TestCrear_SinS3SinPuerto_ModoLocal(t *testing.T) {
 
 	gestor, err := Crear(Opciones{
 		NombreDB:   tempDir + "/test_local.db",
+		Direccion:  "localhost",
 		PuertoHTTP: "",  // Sin puerto
 		ConfigS3:   nil, // Sin S3
 	})
@@ -215,6 +216,7 @@ func TestCrear_ConS3SinPuerto_Error(t *testing.T) {
 
 	_, err := Crear(Opciones{
 		NombreDB:   tempDir + "/test_s3.db",
+		Direccion:  "localhost",
 		PuertoHTTP: "", // Sin puerto
 		ConfigS3: &tipos.ConfiguracionS3{
 			Endpoint: "http://localhost:9000",
@@ -233,6 +235,7 @@ func TestCrear_SinS3ConPuerto_Error(t *testing.T) {
 
 	_, err := Crear(Opciones{
 		NombreDB:   tempDir + "/test_puerto.db",
+		Direccion:  "localhost",
 		PuertoHTTP: "8080", // Con puerto
 		ConfigS3:   nil,    // Sin S3
 	})
@@ -725,17 +728,17 @@ func TestDeberiaSkipearBloque(t *testing.T) {
 
 	// Bloque: 1000-2000, Consulta: 1500-2500 (se solapan)
 	assert.False(t, gestor.deberiaOmitirBloque(
-		"data/0000000001/00000000000000001000_00000000000000002000",
+		"datos/0000000001/00000000000000001000_00000000000000002000",
 		1500, 2500))
 
 	// Bloque: 1000-2000, Consulta: 3000-4000 (no se solapan)
 	assert.True(t, gestor.deberiaOmitirBloque(
-		"data/0000000001/00000000000000001000_00000000000000002000",
+		"datos/0000000001/00000000000000001000_00000000000000002000",
 		3000, 4000))
 
 	// Bloque: 3000-4000, Consulta: 1000-2000 (no se solapan)
 	assert.True(t, gestor.deberiaOmitirBloque(
-		"data/0000000001/00000000000000003000_00000000000000004000",
+		"datos/0000000001/00000000000000003000_00000000000000004000",
 		1000, 2000))
 
 	// Formato inválido - no skip por seguridad
@@ -751,20 +754,20 @@ func TestDeberiaSkipearBloque(t *testing.T) {
 // TestParsearTiempoFinDeClave verifica parseo de tiempos
 func TestParsearTiempoFinDeClave(t *testing.T) {
 	// Clave válida
-	tiempoFin, err := parsearTiempoFinDeClave("data/0000000001/00000000000000001000_00000000000000002000")
+	tiempoFin, err := parsearTiempoFinDeClave("datos/0000000001/00000000000000001000_00000000000000002000")
 	assert.NoError(t, err)
 	assert.Equal(t, int64(2000), tiempoFin)
 
 	// Formato inválido - pocos segmentos
-	_, err = parsearTiempoFinDeClave("data/0000000001")
+	_, err = parsearTiempoFinDeClave("datos/0000000001")
 	assert.Error(t, err)
 
 	// Formato inválido - sin underscore
-	_, err = parsearTiempoFinDeClave("data/0000000001/12345")
+	_, err = parsearTiempoFinDeClave("datos/0000000001/12345")
 	assert.Error(t, err)
 
 	// Formato inválido - no es número
-	_, err = parsearTiempoFinDeClave("data/0000000001/abc_def")
+	_, err = parsearTiempoFinDeClave("datos/0000000001/abc_def")
 	assert.Error(t, err)
 
 	t.Log("✓ parsearTiempoFinDeClave funciona correctamente")
@@ -860,19 +863,17 @@ func crearGestorBordeParaTest(t *testing.T) *GestorBorde {
 	require.NoError(t, err)
 
 	gestor := &GestorBorde{
-		nodoID:        "test-node-001",
-		direccion:     "127.0.0.1",
-		puertoHTTP:    "8080",
-		db:            db,
-		cache:         &Cache{datos: make(map[string]tipos.Serie)},
-		finalizado:    make(chan struct{}),
-		contador:      0,
-		tamañoBuffer:  100,
-		timeoutBuffer: 100 * 1000 * 1000, // 100ms
+		nodoID:     "test-node-001",
+		direccion:  "127.0.0.1",
+		puertoHTTP: "8080",
+		db:         db,
+		cache:      &Cache{datos: make(map[string]tipos.Serie)},
+		finalizado: make(chan struct{}),
+		contador:   0,
 	}
 
 	// Inicializar motor de reglas
-	gestor.MotorReglas = &MotorReglas{
+	gestor.motorReglas = &MotorReglas{
 		reglas:     make(map[string]*Regla),
 		ejecutores: make(map[string]EjecutorAccion),
 		habilitado: true,
@@ -1500,6 +1501,55 @@ func TestConsultarRango_ConDatosEnDB(t *testing.T) {
 	t.Log("ConsultarRango lee y descomprime datos de DB correctamente")
 }
 
+// TestConsultarRango_IngestaMasDeDiezMil verifica que no se trunque la lectura de ingesta.
+func TestConsultarRango_IngestaMasDeDiezMil(t *testing.T) {
+	gestor := crearGestorBordeParaTest(t)
+
+	serie := tipos.Serie{
+		SerieId:          1,
+		Path:             "sensor/temp",
+		TipoDatos:        tipos.Real,
+		TamañoBloque:     100,
+		CompresionBloque: tipos.Ninguna,
+		CompresionBytes:  tipos.SinCompresion,
+	}
+	gestor.cache.mu.Lock()
+	gestor.cache.datos["sensor/temp"] = serie
+	gestor.cache.mu.Unlock()
+
+	coordinador := &CoordinadorSerie{
+		serie:               serie,
+		finalizado:          make(chan struct{}),
+		notificarCompresion: make(chan struct{}, 1),
+	}
+	gestor.coordinadores.Store("sensor/temp", coordinador)
+
+	base := time.Now().UnixNano()
+	total := 10005
+	for i := 0; i < total; i++ {
+		err := gestor.escribirPuntoIngesta(serie.SerieId, tipos.Medicion{
+			Tiempo: base + int64(i),
+			Valor:  float64(i),
+		})
+		require.NoError(t, err)
+	}
+
+	resultado, err := gestor.ConsultarRango(
+		"sensor/temp",
+		time.Unix(0, base),
+		time.Unix(0, base+int64(total-1)),
+	)
+	require.NoError(t, err)
+
+	assert.Len(t, resultado.Series, 1)
+	assert.Equal(t, "sensor/temp", resultado.Series[0])
+	assert.Len(t, resultado.Tiempos, total)
+	assert.Equal(t, base, resultado.Tiempos[0])
+	assert.Equal(t, base+int64(total-1), resultado.Tiempos[len(resultado.Tiempos)-1])
+	assert.Len(t, resultado.Valores, total)
+	assert.Equal(t, float64(total-1), resultado.Valores[len(resultado.Valores)-1][0])
+}
+
 // TestConsultarUltimoPunto_DesdeBuffer verifica lectura desde buffer en memoria
 func TestConsultarUltimoPunto_DesdeBuffer(t *testing.T) {
 	gestor := crearGestorBordeParaTest(t)
@@ -1517,19 +1567,19 @@ func TestConsultarUltimoPunto_DesdeBuffer(t *testing.T) {
 	gestor.cache.datos["sensor/temp"] = serie
 	gestor.cache.mu.Unlock()
 
-	// Crear buffer con datos
+	// Crear coordinador con datos
 	ahora := time.Now().UnixNano()
-	buffer := &BufferSerie{
-		datos:      make([]tipos.Medicion, 100),
-		serie:      serie,
-		indice:     3,
-		finalizado: make(chan struct{}),
-		datosCanal: make(chan tipos.Medicion, 100),
+	coordinador := &CoordinadorSerie{
+		serie:               serie,
+		finalizado:          make(chan struct{}),
+		notificarCompresion: make(chan struct{}, 1),
 	}
-	buffer.datos[0] = tipos.Medicion{Tiempo: ahora - 2000, Valor: float64(20.0)}
-	buffer.datos[1] = tipos.Medicion{Tiempo: ahora - 1000, Valor: float64(21.0)}
-	buffer.datos[2] = tipos.Medicion{Tiempo: ahora, Valor: float64(22.0)} // Más reciente
-	gestor.buffers.Store("sensor/temp", buffer)
+	gestor.coordinadores.Store("sensor/temp", coordinador)
+
+	// Insertar datos directamente al WAL a través del coordinador
+	gestor.escribirPuntoIngesta(serie.SerieId, tipos.Medicion{Tiempo: ahora - 2000, Valor: float64(20.0)})
+	gestor.escribirPuntoIngesta(serie.SerieId, tipos.Medicion{Tiempo: ahora - 1000, Valor: float64(21.0)})
+	gestor.escribirPuntoIngesta(serie.SerieId, tipos.Medicion{Tiempo: ahora, Valor: float64(22.0)}) // Más reciente
 
 	// Consultar último punto (nil, nil = sin límites de tiempo)
 	resultado, err := gestor.ConsultarUltimoPunto("sensor/temp", nil, nil)
@@ -1668,15 +1718,17 @@ func TestHandleConsultaUltimo_Exitoso(t *testing.T) {
 	gestor.cache.datos["sensor/temp"] = serie
 	gestor.cache.mu.Unlock()
 
-	// Buffer con datos
+	// Coordinador con datos
 	ahora := time.Now().UnixNano()
-	buffer := &BufferSerie{
-		datos:  make([]tipos.Medicion, 100),
-		serie:  serie,
-		indice: 1,
+	coordinador := &CoordinadorSerie{
+		serie:               serie,
+		finalizado:          make(chan struct{}),
+		notificarCompresion: make(chan struct{}, 1),
 	}
-	buffer.datos[0] = tipos.Medicion{Tiempo: ahora, Valor: float64(25.0)}
-	gestor.buffers.Store("sensor/temp", buffer)
+	gestor.coordinadores.Store("sensor/temp", coordinador)
+
+	// Insertar datos directamente al WAL
+	gestor.escribirPuntoIngesta(serie.SerieId, tipos.Medicion{Tiempo: ahora, Valor: float64(25.0)})
 
 	// Crear solicitud
 	solicitud := tipos.SolicitudConsultaPunto{Serie: "sensor/temp"}
@@ -1746,7 +1798,7 @@ func TestRegistrarEnS3_S3NoConfigurado(t *testing.T) {
 	clienteS3 = nil
 	defer func() { clienteS3 = clienteOriginal }()
 
-	err := gestor.RegistrarEnS3()
+	err := gestor.registrarEnS3()
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no está configurado")
 	t.Log("RegistrarEnS3 retorna error cuando S3 no está configurado")
@@ -1775,7 +1827,7 @@ func TestRegistrarEnS3_Exitoso(t *testing.T) {
 	gestor.cache.datos["sensor/temp"] = tipos.Serie{Path: "sensor/temp"}
 	gestor.cache.mu.Unlock()
 
-	err := gestor.RegistrarEnS3()
+	err := gestor.registrarEnS3()
 	assert.NoError(t, err)
 	assert.Equal(t, 1, mockS3.putObjectCalls)
 	t.Log("RegistrarEnS3 registra nodo exitosamente")
@@ -1799,23 +1851,9 @@ func TestRegistrarEnS3_ErrorPutObject(t *testing.T) {
 	clienteS3 = mockS3
 	configuracionS3 = tipos.ConfiguracionS3{Bucket: "test-bucket"}
 
-	err := gestor.RegistrarEnS3()
+	err := gestor.registrarEnS3()
 	assert.Error(t, err)
 	t.Log("RegistrarEnS3 maneja error de PutObject")
-}
-
-// TestMigrarAS3_S3NoConfigurado verifica error sin configuración
-func TestMigrarAS3_S3NoConfigurado(t *testing.T) {
-	gestor := crearGestorBordeParaTest(t)
-
-	// Asegurar que clienteS3 es nil y no hay variables de entorno
-	clienteOriginal := clienteS3
-	clienteS3 = nil
-	defer func() { clienteS3 = clienteOriginal }()
-
-	err := gestor.MigrarAS3()
-	assert.Error(t, err)
-	t.Log("MigrarAS3 retorna error cuando S3 no está configurado")
 }
 
 // TestMigrarPorTiempoAlmacenamiento_S3NoConfigurado verifica error sin S3
@@ -2684,19 +2722,19 @@ func TestEliminarSerie_EliminaBuffer(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Verificar que existe buffer
-	_, existe := gestor.buffers.Load("sensor/temp")
-	assert.True(t, existe, "Buffer debe existir antes de eliminar")
+	// Verificar que existe coordinador
+	_, existe := gestor.coordinadores.Load("sensor/temp")
+	assert.True(t, existe, "Coordinador debe existir antes de eliminar")
 
 	// Eliminar serie
 	err = gestor.EliminarSerie("sensor/temp")
 	require.NoError(t, err)
 
-	// Verificar que buffer fue eliminado
-	_, existe = gestor.buffers.Load("sensor/temp")
-	assert.False(t, existe, "Buffer debe ser eliminado")
+	// Verificar que coordinador fue eliminado
+	_, existe = gestor.coordinadores.Load("sensor/temp")
+	assert.False(t, existe, "Coordinador debe ser eliminado")
 
-	t.Log("EliminarSerie elimina y cierra buffer correctamente")
+	t.Log("EliminarSerie elimina y cierra coordinador correctamente")
 }
 
 // TestEliminarSerie_NoAfectaOtrasSeries verifica que no elimina otras series
@@ -3169,7 +3207,7 @@ func TestProcesarEliminacionesPendientes_SinS3(t *testing.T) {
 	gestor.db.Set(generarClaveEliminacionPendiente(1), datos, pebble.Sync)
 
 	// Procesar (no debería hacer nada)
-	err := gestor.ProcesarEliminacionesPendientes()
+	err := gestor.procesarEliminacionesPendientes()
 	assert.NoError(t, err)
 
 	// El pendiente debería seguir ahí
@@ -3204,7 +3242,7 @@ func TestProcesarEliminacionesPendientes_Exitoso(t *testing.T) {
 	require.NoError(t, err)
 
 	// Procesar
-	err = gestor.ProcesarEliminacionesPendientes()
+	err = gestor.procesarEliminacionesPendientes()
 	require.NoError(t, err)
 
 	// Verificar que el pendiente fue eliminado
@@ -3240,7 +3278,7 @@ func TestProcesarEliminacionesPendientes_FallaConexion(t *testing.T) {
 	require.NoError(t, err)
 
 	// Procesar (fallará)
-	err = gestor.ProcesarEliminacionesPendientes()
+	err = gestor.procesarEliminacionesPendientes()
 	require.NoError(t, err) // No retorna error, solo loggea
 
 	// Verificar que el pendiente sigue ahí con intentos incrementados
@@ -3282,7 +3320,7 @@ func TestProcesarEliminacionesPendientes_MultiplesSeries(t *testing.T) {
 	assert.Len(t, pendientes, 5)
 
 	// Procesar
-	err := gestor.ProcesarEliminacionesPendientes()
+	err := gestor.procesarEliminacionesPendientes()
 	require.NoError(t, err)
 
 	// Verificar que todos fueron procesados

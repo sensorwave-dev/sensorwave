@@ -121,7 +121,7 @@ func (me *GestorBorde) consultarRangoSerie(serie tipos.Serie, tiempoInicio, tiem
 	var resultados []tipos.Medicion
 
 	// Crear rangos de búsqueda para iterar sobre los datos de la serie
-	keyPrefix := fmt.Sprintf("data/%010d/", serie.SerieId)
+	keyPrefix := fmt.Sprintf("datos/%010d/", serie.SerieId)
 	lowerBound := []byte(keyPrefix)
 	upperBound := []byte(keyPrefix + "~") // '~' es mayor que todos los números
 
@@ -166,20 +166,23 @@ func (me *GestorBorde) consultarRangoSerie(serie tipos.Serie, tiempoInicio, tiem
 		return nil, fmt.Errorf("error al iterar sobre datos: %v", err)
 	}
 
-	// Obtener datos del buffer en memoria si existe
-	if bufferInterface, ok := me.buffers.Load(serie.Path); ok {
-		buffer := bufferInterface.(*BufferSerie)
-		buffer.mu.Lock()
+	// Obtener datos del WAL (puntos no comprimidos aún) si existe
+	if csInterface, ok := me.coordinadores.Load(serie.Path); ok {
+		cs := csInterface.(*CoordinadorSerie)
+		cs.mu.Lock()
 
-		// Revisar datos del buffer que están dentro del rango
-		for i := 0; i < buffer.indice; i++ {
-			medicion := buffer.datos[i]
-			if medicion.Tiempo >= tiempoInicioUnix && medicion.Tiempo <= tiempoFinUnix {
-				resultados = append(resultados, medicion)
+		// Leer puntos de ingesta para esta serie en el rango temporal consultado
+		puntosWAL, err := me.leerPuntosIngestaEnRango(serie.SerieId, tiempoInicioUnix, tiempoFinUnix)
+		if err == nil {
+			// Filtrar defensivo por rango
+			for _, medicion := range puntosWAL {
+				if medicion.Tiempo >= tiempoInicioUnix && medicion.Tiempo <= tiempoFinUnix {
+					resultados = append(resultados, medicion)
+				}
 			}
 		}
 
-		buffer.mu.Unlock()
+		cs.mu.Unlock()
 	}
 
 	return resultados, nil
@@ -272,26 +275,21 @@ func (me *GestorBorde) consultarUltimoPuntoSerie(serie tipos.Serie, tiempoInicio
 	}
 
 	// Sin rango: comportamiento original - último punto absoluto
-	// Primero revisar el buffer en memoria
-	if bufferInterface, ok := me.buffers.Load(serie.Path); ok {
-		buffer := bufferInterface.(*BufferSerie)
-		buffer.mu.Lock()
-		defer buffer.mu.Unlock()
+	// Primero revisar el WAL (puntos no comprimidos aún)
+	if csInterface, ok := me.coordinadores.Load(serie.Path); ok {
+		cs := csInterface.(*CoordinadorSerie)
+		cs.mu.Lock()
+		defer cs.mu.Unlock()
 
-		if buffer.indice > 0 {
-			// Encontrar la medición más reciente en el buffer
-			ultimaMedicion := buffer.datos[0]
-			for i := 1; i < buffer.indice; i++ {
-				if buffer.datos[i].Tiempo > ultimaMedicion.Tiempo {
-					ultimaMedicion = buffer.datos[i]
-				}
-			}
+		// Leer directamente la medición más reciente en ingesta
+		ultimaMedicion, encontrada, err := me.leerUltimoPuntoIngesta(serie.SerieId)
+		if err == nil && encontrada {
 			return ultimaMedicion, nil
 		}
 	}
 
 	// Buscar el último bloque para esta serie
-	keyPrefix := fmt.Sprintf("data/%010d/", serie.SerieId)
+	keyPrefix := fmt.Sprintf("datos/%010d/", serie.SerieId)
 	lowerBound := []byte(keyPrefix)
 	upperBound := []byte(keyPrefix + "~")
 

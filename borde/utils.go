@@ -83,7 +83,7 @@ func generarNodoID() string {
 
 // generarClaveDatos genera una clave PebbleDB incluyendo el tipo de datos
 func generarClaveDatos(serieId int, tiempoInicio, tiempoFin int64) []byte {
-	clave := fmt.Sprintf("data/%010d/%020d_%020d", serieId, tiempoInicio, tiempoFin)
+	clave := fmt.Sprintf("datos/%010d/%020d_%020d", serieId, tiempoInicio, tiempoFin)
 	return []byte(clave)
 }
 

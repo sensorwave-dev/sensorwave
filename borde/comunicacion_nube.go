@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"sort"
 	"time"
@@ -16,12 +17,13 @@ import (
 	"github.com/sensorwave-dev/sensorwave/tipos"
 )
 
-// RegistrarEnS3 registra el nodo, sus series y sus reglas en almacenamiento S3
+// registrarEnS3 registra el nodo, sus series y sus reglas en almacenamiento S3
 // Esta función se llama cuando:
 // - El nodo se crea por primera vez (en Crear)
 // - Se agrega una nueva serie (en CrearSerie)
+// - Se actualizan tags del nodo (en ActualizarTags)
 // - Se modifica una regla (en AgregarRegla, ActualizarRegla, EliminarRegla)
-func (me *GestorBorde) RegistrarEnS3() error {
+func (me *GestorBorde) registrarEnS3() error {
 	// Verificar que S3 esté configurado
 	if clienteS3 == nil {
 		return fmt.Errorf("S3 no está configurado")
@@ -36,7 +38,7 @@ func (me *GestorBorde) RegistrarEnS3() error {
 	me.cache.mu.RUnlock()
 
 	// Obtener todas las reglas del motor de reglas
-	reglasMap := me.MotorReglas.ListarReglas()
+	reglasMap := me.motorReglas.ListarReglas()
 	var reglas []tipos.Regla
 	for _, regla := range reglasMap {
 		// Convertir condiciones
@@ -141,7 +143,7 @@ func authMiddleware(nodoID string) func(http.Handler) http.Handler {
 }
 
 // iniciarServidorHTTP inicia el servidor HTTP con los endpoints REST para consultas
-func (me *GestorBorde) iniciarServidorHTTP() chan struct{} {
+func (me *GestorBorde) iniciarServidorHTTP() (chan struct{}, error) {
 	listo := make(chan struct{})
 
 	mux := http.NewServeMux()
@@ -154,21 +156,27 @@ func (me *GestorBorde) iniciarServidorHTTP() chan struct{} {
 
 	log.Println("Iniciando servidor HTTP para", me.nodoID, "en puerto", me.puertoHTTP)
 	server := &http.Server{
-		Addr:         "0.0.0.0:" + me.puertoHTTP,
+		// Addr:         "0.0.0.0:" + me.puertoHTTP,
 		Handler:      authMiddleware(me.nodoID)(mux),
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 30 * time.Second,
 	}
 
+    // Intentar bindear SINCRÓNICAMENTE
+	listener, err := net.Listen("tcp", "0.0.0.0:"+me.puertoHTTP)
+	if err != nil {
+		return nil, fmt.Errorf("no se pudo abrir puerto HTTP %s: %w", me.puertoHTTP, err)
+	}
+
 	go func() {
 		log.Printf("Borde %s: servidor HTTP iniciando en puerto %s", me.nodoID, me.puertoHTTP)
 		close(listo)
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
 			log.Printf("Error en servidor HTTP: %v", err)
 		}
 	}()
 
-	return listo
+	return listo, nil
 }
 
 // handleConsultaRango maneja consultas de rango de tiempo via REST

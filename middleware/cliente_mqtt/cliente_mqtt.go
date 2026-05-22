@@ -9,6 +9,7 @@ import (
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"github.com/google/uuid"
 	"github.com/sensorwave-dev/sensorwave/middleware"
+	"github.com/sensorwave-dev/sensorwave/middleware/internal/mensaje"
 )
 
 // Constantes de reconexión
@@ -25,13 +26,13 @@ type ClienteMQTT struct {
 }
 
 // conectar cliente con backoff exponencial
-func Conectar(direccion string, puerto string) *ClienteMQTT {
+func Conectar(host string, puerto string) *ClienteMQTT {
 	c := &ClienteMQTT{
 		suscripciones: make(map[string]mqtt.MessageHandler),
 	}
 
 	// Configuración del cliente MQTT
-	servidor := "tcp://" + direccion + ":" + puerto
+	servidor := "tcp://" + host + ":" + puerto
 	opts := mqtt.NewClientOptions()
 	opts.AddBroker(servidor)
 	opts.SetClientID("sensorwave_" + uuid.New().String())
@@ -78,7 +79,7 @@ func (c *ClienteMQTT) Desconectar() {
 
 // publicar
 func (c *ClienteMQTT) Publicar(topico string, payload interface{}, opciones ...middleware.PublicarOpcion) {
-	mensaje, err := middleware.Construir(topico, payload, opciones...)
+	mensaje, err := mensaje.Construir(topico, payload, opciones...)
 	if err != nil {
 		log.Printf("Error al construir mensaje: %v", err)
 		return

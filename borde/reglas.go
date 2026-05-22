@@ -785,7 +785,7 @@ func (mr *MotorReglas) AgregarRegla(regla *Regla) error {
 
 	// Actualizar S3 (best-effort, igual que CrearSerie)
 	if mr.gestor != nil && clienteS3 != nil {
-		if err := mr.gestor.RegistrarEnS3(); err != nil {
+		if err := mr.gestor.registrarEnS3(); err != nil {
 			log.Printf("Error registrando regla nueva en S3: %v", err)
 			// No retornar error - la regla ya fue guardada localmente
 		}
@@ -811,7 +811,7 @@ func (mr *MotorReglas) EliminarRegla(id string) error {
 
 	// Actualizar S3 (best-effort)
 	if mr.gestor != nil && clienteS3 != nil {
-		if err := mr.gestor.RegistrarEnS3(); err != nil {
+		if err := mr.gestor.registrarEnS3(); err != nil {
 			log.Printf("Error registrando eliminación de regla en S3: %v", err)
 		}
 	}
@@ -849,7 +849,7 @@ func (mr *MotorReglas) ActualizarRegla(regla *Regla) error {
 
 	// Actualizar S3 (best-effort)
 	if mr.gestor != nil && clienteS3 != nil {
-		if err := mr.gestor.RegistrarEnS3(); err != nil {
+		if err := mr.gestor.registrarEnS3(); err != nil {
 			log.Printf("Error registrando regla actualizada en S3: %v", err)
 		}
 	}
@@ -895,7 +895,7 @@ func (mr *MotorReglas) HabilitarRegla(id string, habilitada bool) error {
 
 	// Actualizar S3 (best-effort)
 	if mr.gestor != nil && clienteS3 != nil {
-		if err := mr.gestor.RegistrarEnS3(); err != nil {
+		if err := mr.gestor.registrarEnS3(); err != nil {
 			log.Printf("Error registrando cambio de estado de regla en S3: %v", err)
 		}
 	}

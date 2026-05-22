@@ -14,11 +14,12 @@ import (
 	"time"
 
 	"github.com/sensorwave-dev/sensorwave/middleware"
+	"github.com/sensorwave-dev/sensorwave/middleware/internal/mensaje"
 )
 
 type ClienteHTTP struct {
-	BaseURL   string
-	Cliente   *http.Client
+	baseURL   string
+	cliente   *http.Client
 	clienteID string
 	mu        sync.Mutex
 }
@@ -41,14 +42,14 @@ const (
 // NuevoClienteHTTP crea un nuevo cliente HTTP
 func Conectar(host string, puerto string) *ClienteHTTP {
 	return &ClienteHTTP{
-		BaseURL: "http://" + host + ":" + puerto,
-		Cliente: &http.Client{},
+		baseURL: "http://" + host + ":" + puerto,
+		cliente: &http.Client{},
 	}
 }
 
 // Publicar realiza un POST al servidor HTTP
 func (c *ClienteHTTP) Publicar(topico string, payload interface{}, opciones ...middleware.PublicarOpcion) {
-	mensaje, err := middleware.Construir(topico, payload, opciones...)
+	mensaje, err := mensaje.Construir(topico, payload, opciones...)
 	if err != nil {
 		log.Printf("Error al construir mensaje: %v", err)
 		return
@@ -61,12 +62,12 @@ func (c *ClienteHTTP) Publicar(topico string, payload interface{}, opciones ...m
 		return
 	}
 
-	url := fmt.Sprintf("%s%s?topico=%s", c.BaseURL, ruta, url.QueryEscape(topico))
+	url := fmt.Sprintf("%s%s?topico=%s", c.baseURL, ruta, url.QueryEscape(topico))
 	if mensaje.QoS == 1 {
 		reintentos := 0
 		delay := ackTimeout
 		for {
-			resp, err := c.Cliente.Post(url, "application/json", bytes.NewReader(mensajeBytes))
+			resp, err := c.cliente.Post(url, "application/json", bytes.NewReader(mensajeBytes))
 			if err == nil {
 				body, _ := io.ReadAll(resp.Body)
 				resp.Body.Close()
@@ -89,7 +90,7 @@ func (c *ClienteHTTP) Publicar(topico string, payload interface{}, opciones ...m
 		}
 	}
 
-	resp, err := c.Cliente.Post(url, "application/json", bytes.NewReader(mensajeBytes))
+	resp, err := c.cliente.Post(url, "application/json", bytes.NewReader(mensajeBytes))
 	if err != nil {
 		log.Printf("Error al realizar el POST: %v", err)
 		return
@@ -109,8 +110,8 @@ func (c *ClienteHTTP) Suscribir(topico string, callback middleware.CallbackFunc)
 		delay := backoffInicial
 
 		for reconexiones < maxIntentosReconexion {
-			url := fmt.Sprintf("%s%s?topico=%s", c.BaseURL, ruta, url.QueryEscape(topico))
-			resp, err := c.Cliente.Get(url)
+			url := fmt.Sprintf("%s%s?topico=%s", c.baseURL, ruta, url.QueryEscape(topico))
+			resp, err := c.cliente.Get(url)
 			if err != nil {
 				reconexiones++
 				if reconexiones >= maxIntentosReconexion {
@@ -209,8 +210,8 @@ func (c *ClienteHTTP) enviarAck(MensajeID string) {
 		return
 	}
 
-	url := fmt.Sprintf("%s%s/ack", c.BaseURL, ruta)
-	resp, err := c.Cliente.Post(url, "application/json", bytes.NewReader(body))
+	url := fmt.Sprintf("%s%s/ack", c.baseURL, ruta)
+	resp, err := c.cliente.Post(url, "application/json", bytes.NewReader(body))
 	if err != nil {
 		return
 	}
@@ -226,13 +227,13 @@ func (c *ClienteHTTP) Desuscribir(topico string) {
 		return
 	}
 
-	url := fmt.Sprintf("%s%s?topico=%s&clienteID=%s", c.BaseURL, ruta, url.QueryEscape(topico), url.QueryEscape(clienteID))
+	url := fmt.Sprintf("%s%s?topico=%s&clienteID=%s", c.baseURL, ruta, url.QueryEscape(topico), url.QueryEscape(clienteID))
 	req, err := http.NewRequest("DELETE", url, nil)
 	if err != nil {
 		log.Printf("Error al crear la solicitud DELETE: %v", err)
 		return
 	}
-	resp, err := c.Cliente.Do(req)
+	resp, err := c.cliente.Do(req)
 	if err != nil {
 		log.Printf("Error al realizar la solicitud DELETE: %v", err)
 		return
@@ -247,8 +248,8 @@ func (c *ClienteHTTP) Desuscribir(topico string) {
 
 // Desconectar cierra las conexiones del cliente HTTP
 func (c *ClienteHTTP) Desconectar() {
-	if c.Cliente != nil {
-		if transporte, ok := c.Cliente.Transport.(*http.Transport); ok {
+	if c.cliente != nil {
+		if transporte, ok := c.cliente.Transport.(*http.Transport); ok {
 			transporte.CloseIdleConnections()
 		}
 	}

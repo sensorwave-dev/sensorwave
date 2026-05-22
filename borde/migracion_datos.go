@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -21,8 +20,8 @@ import (
 var clienteS3 tipos.ClienteS3
 var configuracionS3 tipos.ConfiguracionS3
 
-// ConfigurarS3 configura la conexión a almacenamiento S3-compatible
-func (me *GestorBorde) ConfigurarS3(cfg tipos.ConfiguracionS3) error {
+// configurarS3 configura la conexión a almacenamiento S3-compatible
+func (me *GestorBorde) configurarS3(cfg tipos.ConfiguracionS3) error {
 	configuracionS3 = cfg
 
 	// Crear cliente S3 usando la función centralizada
@@ -52,107 +51,12 @@ func (me *GestorBorde) ConfigurarS3(cfg tipos.ConfiguracionS3) error {
 	return nil
 }
 
-// MigrarAS3 migra todas las series y datos a almacenamiento S3 como archivos
-func (me *GestorBorde) MigrarAS3() error {
-	// Verificar que S3 esté configurado
-	if clienteS3 == nil {
-		// Intentar configurar desde variables de entorno
-		cfg := tipos.ConfiguracionS3{
-			Endpoint:        os.Getenv("S3_ENDPOINT"),
-			AccessKeyID:     os.Getenv("S3_ACCESS_KEY_ID"),
-			SecretAccessKey: os.Getenv("S3_SECRET_ACCESS_KEY"),
-			Bucket:          os.Getenv("S3_BUCKET"),
-			Region:          os.Getenv("S3_REGION"),
-		}
-
-		if cfg.Endpoint == "" {
-			cfg.Endpoint = "http://localhost:3900" // Valor por defecto
-		}
-		if cfg.Bucket == "" {
-			cfg.Bucket = "sensorwave-data" // Valor por defecto
-		}
-		if cfg.Region == "" {
-			cfg.Region = "us-east-1"
-		}
-
-		if cfg.AccessKeyID == "" || cfg.SecretAccessKey == "" {
-			return fmt.Errorf("S3 no está configurado. Use ConfigurarS3() o configure las variables de entorno")
-		}
-
-		err := me.ConfigurarS3(cfg)
-		if err != nil {
-			return fmt.Errorf("error al configurar S3: %v", err)
-		}
-	}
-
-	ctx := context.TODO()
-	contadorMigrados := 0
-
-	// Iterar sobre los datos en PebbleDB y migrar a S3
-	iter, err := me.db.NewIter(&pebble.IterOptions{
-		LowerBound: []byte("data/"),
-		UpperBound: []byte("data0"),
-	})
-	if err != nil {
-		return fmt.Errorf("error al crear iterador para migración: %v", err)
-	}
-	defer iter.Close()
-
-	for iter.First(); iter.Valid(); iter.Next() {
-		// Obtener clave y valor
-		clave := string(iter.Key())
-		valor := iter.Value()
-
-		// Extraer serieId y tiempos de la clave local para generar clave S3
-		serieId, tiempoInicio, tiempoFin, err := parsearClaveLocalDatos(clave)
-		if err != nil {
-			log.Printf("Advertencia: clave con formato inválido %s: %v", clave, err)
-			continue
-		}
-
-		// Crear nombre de archivo en S3 con formato optimizado
-		// Formato: nodoID/{serieId}_{tiempoInicio}_{tiempoFin}
-		nombreArchivo := tipos.GenerarClaveS3Datos(me.nodoID, serieId, tiempoInicio, tiempoFin)
-
-		// Subir archivo a S3
-		_, err = clienteS3.PutObject(ctx, &s3.PutObjectInput{
-			Bucket: aws.String(configuracionS3.Bucket),
-			Key:    aws.String(nombreArchivo),
-			Body:   bytes.NewReader(valor),
-		})
-		if err != nil {
-			return fmt.Errorf("error al subir dato a S3 (clave: %s): %v", clave, err)
-		}
-
-		contadorMigrados++
-
-		// Borrar la entrada de PebbleDB después de migrar
-		err = me.db.Delete(iter.Key(), pebble.Sync)
-		if err != nil {
-			return fmt.Errorf("error al borrar dato migrado de PebbleDB: %v", err)
-		}
-
-		// Log cada 100 registros migrados
-		if contadorMigrados%100 == 0 {
-			log.Printf("Migrados %d registros a S3...", contadorMigrados)
-		}
-	}
-
-	// Verificar errores del iterador
-	if err := iter.Error(); err != nil {
-		return fmt.Errorf("error durante la iteración para migración: %v", err)
-	}
-
-	log.Printf("Migración a S3 completada exitosamente. Total de registros migrados: %d", contadorMigrados)
-	return nil
-}
-
 // MigrarPorTiempoAlmacenamiento migra bloques de datos que excedan el tiempo de almacenamiento configurado
 // para cada serie. Solo migra series que tengan TiempoAlmacenamiento > 0.
 func (me *GestorBorde) MigrarPorTiempoAlmacenamiento() error {
 	// Verificar que S3 esté configurado
 	if clienteS3 == nil {
-		return fmt.Errorf("S3 no está configurado. Use ConfigurarS3() primero")
+		return fmt.Errorf("S3 no está configurado")
 	}
 
 	ctx := context.TODO()
@@ -182,7 +86,7 @@ func (me *GestorBorde) MigrarPorTiempoAlmacenamiento() error {
 		tiempoLimite := ahora - serie.TiempoAlmacenamiento
 
 		// Construir prefijo para buscar bloques de esta serie
-		prefijo := fmt.Sprintf("data/%010d/", serie.SerieId)
+		prefijo := fmt.Sprintf("datos/%010d/", serie.SerieId)
 
 		iter, err := me.db.NewIter(&pebble.IterOptions{
 			LowerBound: []byte(prefijo),
@@ -265,9 +169,9 @@ func (me *GestorBorde) MigrarPorTiempoAlmacenamiento() error {
 	return nil
 }
 
-// parsearTiempoFinDeClave extrae el tiempoFin de una clave con formato "data/{serieId}/{tiempoInicio}_{tiempoFin}"
+// parsearTiempoFinDeClave extrae el tiempoFin de una clave con formato "datos/{serieId}/{tiempoInicio}_{tiempoFin}"
 func parsearTiempoFinDeClave(clave string) (int64, error) {
-	// Formato: data/0000000001/00000000000000000001_00000000000000000002
+	// Formato: datos/0000000001/00000000000000000001_00000000000000000002
 	partes := strings.Split(clave, "/")
 	if len(partes) != 3 {
 		return 0, fmt.Errorf("formato de clave inválido: %s", clave)
@@ -287,10 +191,10 @@ func parsearTiempoFinDeClave(clave string) (int64, error) {
 }
 
 // parsearClaveLocalDatos extrae serieId, tiempoInicio y tiempoFin de una clave local de PebbleDB
-// Formato: data/{serieId}/{tiempoInicio}_{tiempoFin}
+// Formato: datos/{serieId}/{tiempoInicio}_{tiempoFin}
 func parsearClaveLocalDatos(clave string) (serieId int, tiempoInicio, tiempoFin int64, err error) {
 	partes := strings.Split(clave, "/")
-	if len(partes) != 3 || partes[0] != "data" {
+	if len(partes) != 3 || partes[0] != "datos" {
 		return 0, 0, 0, fmt.Errorf("formato de clave local inválido: %s", clave)
 	}
 
@@ -489,9 +393,9 @@ func (me *GestorBorde) eliminarSerieDeS3(serieId int) (int, error) {
 	return objetosEliminados, nil
 }
 
-// ProcesarEliminacionesPendientes procesa todas las eliminaciones pendientes de S3
+// procesarEliminacionesPendientes procesa todas las eliminaciones pendientes de S3
 // Intenta eliminar los datos de cada serie en S3 y actualiza el registro del nodo
-func (me *GestorBorde) ProcesarEliminacionesPendientes() error {
+func (me *GestorBorde) procesarEliminacionesPendientes() error {
 	// Verificar si el gestor está cerrando
 	select {
 	case <-me.finalizado:
@@ -543,7 +447,7 @@ func (me *GestorBorde) ProcesarEliminacionesPendientes() error {
 
 	// Actualizar registro del nodo en S3 si hubo eliminaciones exitosas
 	if exitosos > 0 {
-		if err := me.RegistrarEnS3(); err != nil {
+		if err := me.registrarEnS3(); err != nil {
 			log.Printf("Advertencia: error actualizando registro del nodo en S3: %v", err)
 		}
 	}
@@ -552,9 +456,9 @@ func (me *GestorBorde) ProcesarEliminacionesPendientes() error {
 	return nil
 }
 
-// IniciarLimpiezaS3Automatica inicia un goroutine que procesa eliminaciones pendientes
+// iniciarLimpiezaS3Automatica inicia un goroutine que procesa eliminaciones pendientes
 // cada 5 minutos (mismo intervalo que limpieza de reglas)
-func (me *GestorBorde) IniciarLimpiezaS3Automatica() {
+func (me *GestorBorde) iniciarLimpiezaS3Automatica() {
 	go func() {
 		ticker := time.NewTicker(5 * time.Minute)
 		defer ticker.Stop()
@@ -569,7 +473,7 @@ func (me *GestorBorde) IniciarLimpiezaS3Automatica() {
 					continue // S3 no configurado, saltar
 				}
 
-				if err := me.ProcesarEliminacionesPendientes(); err != nil {
+				if err := me.procesarEliminacionesPendientes(); err != nil {
 					log.Printf("Error en limpieza automática de S3: %v", err)
 				}
 			}

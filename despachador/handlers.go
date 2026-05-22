@@ -385,11 +385,11 @@ func serieToResponse(si SerieInfo) SerieResponse {
 	return SerieResponse{
 		Path:                 si.Path,
 		NodoID:               si.NodoID,
-		TipoDatos:            si.TipoDatos.String(),
+		TipoDatos:            si.TipoDatos,
 		Tags:                 si.Tags,
 		TamanoBloque:         si.TamañoBloque,
 		TiempoAlmacenamiento: si.TiempoAlmacenamiento,
-		CompresionBytes:      string(si.CompresionBytes),
-		CompresionBloque:     string(si.CompresionBloque),
+		CompresionBytes:      si.CompresionBytes,
+		CompresionBloque:     si.CompresionBloque,
 	}
 }

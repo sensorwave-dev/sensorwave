@@ -1,5 +1,9 @@
 package despachador
 
+import (
+	"github.com/sensorwave-dev/sensorwave/tipos"
+)
+
 // ============================================================================
 // TIPOS DE RESPUESTA DE LA API REST
 // Estos structs son usados por los handlers para serializar respuestas JSON
@@ -13,14 +17,14 @@ type StatusResponse struct {
 
 // SerieResponse respuesta con información de serie para JSON
 type SerieResponse struct {
-	Path                 string            `json:"path"`
-	NodoID               string            `json:"nodo_id"`
-	TipoDatos            string            `json:"tipo_datos"`
-	Tags                 map[string]string `json:"tags,omitempty"`
-	TamanoBloque         int               `json:"tamano_bloque"`
-	TiempoAlmacenamiento int64             `json:"tiempo_almacenamiento"`
-	CompresionBytes      string            `json:"compresion_bytes"`
-	CompresionBloque     string            `json:"compresion_bloque"`
+	Path                 string                     `json:"path"`
+	NodoID               string                     `json:"nodo_id"`
+	TipoDatos            tipos.TipoDatos            `json:"tipo_datos"`
+	Tags                 map[string]string          `json:"tags,omitempty"`
+	TamanoBloque         int                        `json:"tamano_bloque"`
+	TiempoAlmacenamiento int64                      `json:"tiempo_almacenamiento"`
+	CompresionBytes      tipos.TipoCompresion       `json:"compresion_bytes"`
+	CompresionBloque     tipos.TipoCompresionBloque `json:"compresion_bloque"`
 }
 
 // ConsultaRangoRequest solicitud de consulta por rango

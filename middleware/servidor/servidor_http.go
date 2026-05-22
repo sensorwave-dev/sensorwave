@@ -34,8 +34,8 @@ const (
 )
 
 // IniciarHTTP inicia un servidor HTTP en el puerto especificado.
-// Retorna un canal que se cierra cuando el servidor está listo para aceptar conexiones.
-func IniciarHTTP(puerto string) <-chan struct{} {
+// La función retorna cuando el servidor está listo para aceptar conexiones.
+func IniciarHTTP(puerto string) {
 	listo := make(chan struct{})
 
 	go func() {
@@ -68,7 +68,7 @@ func IniciarHTTP(puerto string) <-chan struct{} {
 		server.Serve(listener)
 	}()
 
-	return listo
+	<-listo // Esperar a que la goroutine avise que está listo
 }
 
 // manejador es el punto de entrada para todas las solicitudes HTTP
@@ -121,6 +121,31 @@ func manejarSuscripcionHTTP(w http.ResponseWriter, r *http.Request) {
 	clientesPorTopico[normalizado][clienteID] = cliente
 	clientesPorID[clienteID] = cliente
 	mutexHTTP.Unlock()
+
+	defer func() {
+		mutexHTTP.Lock()
+		if clientes, exists := clientesPorTopico[normalizado]; exists {
+			delete(clientes, clienteID)
+			if len(clientes) == 0 {
+				delete(clientesPorTopico, normalizado)
+			}
+		}
+		delete(clientesPorID, clienteID)
+		mutexHTTP.Unlock()
+
+		cliente.mu.Lock()
+		if !cliente.cerrado {
+			close(cliente.Canal)
+			cliente.cerrado = true
+		}
+		cliente.mu.Unlock()
+
+		cliente.pendientesMu.Lock()
+		cliente.pendientes = make(map[string]struct{})
+		cliente.pendientesMu.Unlock()
+
+		loggerPrint(LOG_HTTP, "Cliente desconectado - ID: %s, Tópico: %s", clienteID, normalizado)
+	}()
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -180,29 +205,6 @@ func manejarSuscripcionHTTP(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		}
 	}
-
-	mutexHTTP.Lock()
-	if clientes, exists := clientesPorTopico[normalizado]; exists {
-		delete(clientes, clienteID)
-		if len(clientes) == 0 {
-			delete(clientesPorTopico, normalizado)
-		}
-	}
-	delete(clientesPorID, clienteID)
-	mutexHTTP.Unlock()
-
-	cliente.mu.Lock()
-	if !cliente.cerrado {
-		close(cliente.Canal)
-		cliente.cerrado = true
-	}
-	cliente.mu.Unlock()
-
-	cliente.pendientesMu.Lock()
-	cliente.pendientes = make(map[string]struct{})
-	cliente.pendientesMu.Unlock()
-
-	loggerPrint(LOG_HTTP, "Cliente desconectado - ID: %s, Tópico: %s", clienteID, normalizado)
 }
 
 // Manejar publicaciones de mensajes
@@ -239,6 +241,10 @@ func manejarPublicacionHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := validarQoS(mensaje); err != nil {
 		http.Error(w, "QoS invalido", http.StatusBadRequest)
+		return
+	}
+	if err := validarTamanoPayload(mensaje); err != nil {
+		http.Error(w, "Payload demasiado grande", http.StatusRequestEntityTooLarge)
 		return
 	}
 	if mensajeTopico != topicoQuery {

@@ -1,11 +1,17 @@
 package servidor
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
 
 var (
 	errQoSInvalido        = errors.New("qos invalido")
 	errMensajeIDRequerido = errors.New("mensajeId requerido")
+	errPayloadMuyGrande   = errors.New("payload demasiado grande")
 )
+
+const tamanoMaximoPayload = 65536
 
 func validarQoS(m Mensaje) error {
 	switch m.QoS {
@@ -19,4 +25,11 @@ func validarQoS(m Mensaje) error {
 	default:
 		return errQoSInvalido
 	}
+}
+
+func validarTamanoPayload(m Mensaje) error {
+	if len(m.Payload) > tamanoMaximoPayload {
+		return fmt.Errorf("%w: %d bytes (máximo %d)", errPayloadMuyGrande, len(m.Payload), tamanoMaximoPayload)
+	}
+	return nil
 }

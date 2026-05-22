@@ -100,12 +100,13 @@ func HandlerCrearSerie(gestor *GestorBorde) http.HandlerFunc {
 		}
 
 		var req struct {
-			Path             string            `json:"path"`
-			Tipo             string            `json:"tipo"`
-			TamañoBloque     int               `json:"tamano_bloque,omitempty"`
-			CompresionBytes  string            `json:"compresion_bytes,omitempty"`
-			CompresionBloque string            `json:"compresion_bloque,omitempty"`
-			Tags             map[string]string `json:"tags,omitempty"`
+			Path                 string            `json:"path"`
+			Tipo                 string            `json:"tipo"`
+			TamañoBloque         int               `json:"tamano_bloque,omitempty"`
+			CompresionBytes      string            `json:"compresion_bytes,omitempty"`
+			CompresionBloque     string            `json:"compresion_bloque,omitempty"`
+			TiempoAlmacenamiento int64             `json:"tiempo_almacenamiento,omitempty"`
+			Tags                 map[string]string `json:"tags,omitempty"`
 		}
 
 		if err := tipos.LeerJSON(r, &req); err != nil {
@@ -120,12 +121,13 @@ func HandlerCrearSerie(gestor *GestorBorde) http.HandlerFunc {
 
 		// Crear serie con defaults
 		serie := tipos.Serie{
-			Path:             req.Path,
-			TipoDatos:        parsearTipoDatos(req.Tipo),
-			TamañoBloque:     100,
-			Tags:             req.Tags,
-			CompresionBytes:  tipos.TipoCompresion(req.CompresionBytes),
-			CompresionBloque: tipos.TipoCompresionBloque(req.CompresionBloque),
+			Path:                 req.Path,
+			TipoDatos:            parsearTipoDatos(req.Tipo),
+			TamañoBloque:         100,
+			TiempoAlmacenamiento: req.TiempoAlmacenamiento,
+			Tags:                 req.Tags,
+			CompresionBytes:      tipos.TipoCompresion(req.CompresionBytes),
+			CompresionBloque:     tipos.TipoCompresionBloque(req.CompresionBloque),
 		}
 
 		if req.TamañoBloque > 0 {
@@ -219,7 +221,7 @@ func HandlerInsertar(gestor *GestorBorde) http.HandlerFunc {
 // HandlerConsultarRango consulta datos de una serie en un rango de tiempo
 func HandlerConsultarRango(gestor *GestorBorde) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		if r.Method != http.MethodPost {
 			tipos.EnviarError(w, http.StatusMethodNotAllowed, "método no permitido")
 			return
 		}
@@ -230,15 +232,9 @@ func HandlerConsultarRango(gestor *GestorBorde) http.HandlerFunc {
 			TiempoFin    int64  `json:"tiempo_fin"`
 		}
 
-		if r.Method == http.MethodPost {
-			if err := tipos.LeerJSON(r, &req); err != nil {
-				tipos.EnviarError(w, http.StatusBadRequest, err.Error())
-				return
-			}
-		} else {
-			req.Serie = r.URL.Query().Get("serie")
-			req.TiempoInicio = 0
-			req.TiempoFin = time.Now().UnixNano()
+		if err := tipos.LeerJSON(r, &req); err != nil {
+			tipos.EnviarError(w, http.StatusBadRequest, err.Error())
+			return
 		}
 
 		if req.Serie == "" {
@@ -262,18 +258,38 @@ func HandlerConsultarRango(gestor *GestorBorde) http.HandlerFunc {
 // HandlerConsultarUltimo consulta el último punto de una serie
 func HandlerConsultarUltimo(gestor *GestorBorde) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
+		if r.Method != http.MethodPost {
 			tipos.EnviarError(w, http.StatusMethodNotAllowed, "método no permitido")
 			return
 		}
 
-		path := r.URL.Query().Get("path")
-		if path == "" {
-			tipos.EnviarError(w, http.StatusBadRequest, "se requiere el parámetro 'path'")
+		var req struct {
+			Serie        string `json:"serie"`
+			TiempoInicio *int64 `json:"tiempo_inicio,omitempty"`
+			TiempoFin    *int64 `json:"tiempo_fin,omitempty"`
+		}
+
+		if err := tipos.LeerJSON(r, &req); err != nil {
+			tipos.EnviarError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 
-		resultado, err := gestor.ConsultarUltimoPunto(path, nil, nil)
+		if req.Serie == "" {
+			tipos.EnviarError(w, http.StatusBadRequest, "se requiere el parámetro 'serie'")
+			return
+		}
+
+		var tiempoInicio, tiempoFin *time.Time
+		if req.TiempoInicio != nil {
+			t := time.Unix(0, *req.TiempoInicio)
+			tiempoInicio = &t
+		}
+		if req.TiempoFin != nil {
+			t := time.Unix(0, *req.TiempoFin)
+			tiempoFin = &t
+		}
+
+		resultado, err := gestor.ConsultarUltimoPunto(req.Serie, tiempoInicio, tiempoFin)
 		if err != nil {
 			tipos.EnviarError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -286,7 +302,7 @@ func HandlerConsultarUltimo(gestor *GestorBorde) http.HandlerFunc {
 // HandlerConsultarAgregacion consulta agregaciones de una serie
 func HandlerConsultarAgregacion(gestor *GestorBorde) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		if r.Method != http.MethodPost {
 			tipos.EnviarError(w, http.StatusMethodNotAllowed, "método no permitido")
 			return
 		}
@@ -298,16 +314,9 @@ func HandlerConsultarAgregacion(gestor *GestorBorde) http.HandlerFunc {
 			Agregaciones []string `json:"agregaciones"`
 		}
 
-		if r.Method == http.MethodPost {
-			if err := tipos.LeerJSON(r, &req); err != nil {
-				tipos.EnviarError(w, http.StatusBadRequest, err.Error())
-				return
-			}
-		} else {
-			req.Serie = r.URL.Query().Get("serie")
-			req.Agregaciones = r.URL.Query()["agregacion"]
-			req.TiempoInicio = 0
-			req.TiempoFin = time.Now().UnixNano()
+		if err := tipos.LeerJSON(r, &req); err != nil {
+			tipos.EnviarError(w, http.StatusBadRequest, err.Error())
+			return
 		}
 
 		if req.Serie == "" {
@@ -346,7 +355,7 @@ func HandlerConsultarAgregacion(gestor *GestorBorde) http.HandlerFunc {
 // HandlerConsultarAgregacionTemporal consulta agregaciones temporales
 func HandlerConsultarAgregacionTemporal(gestor *GestorBorde) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		if r.Method != http.MethodPost {
 			tipos.EnviarError(w, http.StatusMethodNotAllowed, "método no permitido")
 			return
 		}
@@ -356,20 +365,12 @@ func HandlerConsultarAgregacionTemporal(gestor *GestorBorde) http.HandlerFunc {
 			TiempoInicio int64    `json:"tiempo_inicio"`
 			TiempoFin    int64    `json:"tiempo_fin"`
 			Agregaciones []string `json:"agregaciones"`
-			Intervalo    string   `json:"intervalo"`
+			Intervalo    int64    `json:"intervalo"`
 		}
 
-		if r.Method == http.MethodPost {
-			if err := tipos.LeerJSON(r, &req); err != nil {
-				tipos.EnviarError(w, http.StatusBadRequest, err.Error())
-				return
-			}
-		} else {
-			req.Serie = r.URL.Query().Get("serie")
-			req.Agregaciones = r.URL.Query()["agregacion"]
-			req.Intervalo = r.URL.Query().Get("intervalo")
-			req.TiempoInicio = 0
-			req.TiempoFin = time.Now().UnixNano()
+		if err := tipos.LeerJSON(r, &req); err != nil {
+			tipos.EnviarError(w, http.StatusBadRequest, err.Error())
+			return
 		}
 
 		if req.Serie == "" {
@@ -382,8 +383,8 @@ func HandlerConsultarAgregacionTemporal(gestor *GestorBorde) http.HandlerFunc {
 			return
 		}
 
-		if req.Intervalo == "" {
-			tipos.EnviarError(w, http.StatusBadRequest, "se requiere el parámetro 'intervalo'")
+		if req.Intervalo <= 0 {
+			tipos.EnviarError(w, http.StatusBadRequest, "intervalo debe ser mayor a cero")
 			return
 		}
 
@@ -397,12 +398,7 @@ func HandlerConsultarAgregacionTemporal(gestor *GestorBorde) http.HandlerFunc {
 			tiposAgregacion = append(tiposAgregacion, tipo)
 		}
 
-		intervalo, err := time.ParseDuration(req.Intervalo)
-		if err != nil {
-			tipos.EnviarError(w, http.StatusBadRequest, fmt.Sprintf("intervalo inválido: %s", req.Intervalo))
-			return
-		}
-
+		intervalo := time.Duration(req.Intervalo)
 		inicio := time.Unix(0, req.TiempoInicio)
 		fin := time.Unix(0, req.TiempoFin)
 
