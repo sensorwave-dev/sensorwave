@@ -30,4 +30,5 @@ type Mensaje struct {
 	Interno   bool   `json:"interno"`
 	QoS       int    `json:"qos,omitempty"`
 	MensajeID string `json:"mensajeId,omitempty"`
+	Origen    string `json:"origen,omitempty"`
 }

@@ -118,6 +118,7 @@ func manejadorCoAP(w mux.ResponseWriter, r *mux.Message) {
 			return
 		}
 		mensaje.Topico = mensajeTopico
+		asignarOrigenSiVacio(&mensaje)
 		loggerPrint(LOG_COAP, "Mensaje recibido - Tópico: %s, QoS: %d, MensajeID: %s", mensaje.Topico, mensaje.QoS, mensaje.MensajeID)
 		manejarPublicacionCoAP(w, r, normalizado, mensaje)
 	default:
@@ -160,6 +161,7 @@ func manejarPublicacionCoAP(w mux.ResponseWriter, r *mux.Message, topico string,
 		go enviarCoAP(LOG_COAP, payload)
 		go enviarHTTP(LOG_COAP, payload)
 		go enviarMQTT(LOG_COAP, payload)
+		go reenviarUpstream(payload)
 	}
 }
 

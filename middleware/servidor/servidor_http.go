@@ -252,6 +252,7 @@ func manejarPublicacionHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	mensaje.Topico = mensajeTopico
+	asignarOrigenSiVacio(&mensaje)
 
 	loggerPrint(LOG_HTTP, "Mensaje recibido - Tópico: %s, QoS: %d, MensajeID: %s", mensaje.Topico, mensaje.QoS, mensaje.MensajeID)
 
@@ -261,6 +262,7 @@ func manejarPublicacionHTTP(w http.ResponseWriter, r *http.Request) {
 		go enviarHTTP(LOG_HTTP, mensaje)
 		go enviarCoAP(LOG_HTTP, mensaje)
 		go enviarMQTT(LOG_HTTP, mensaje)
+		go reenviarUpstream(mensaje)
 	}
 	// Responder al cliente que envió el POST
 	if mensaje.QoS == 1 {
