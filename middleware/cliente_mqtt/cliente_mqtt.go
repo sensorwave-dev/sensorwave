@@ -117,7 +117,7 @@ func (c *ClienteMQTT) Suscribir(topico string, callback middleware.CallbackFunc)
 	c.suscripciones[topico] = callbackInterno
 	c.mu.Unlock()
 
-	if token := c.cliente.Subscribe(topico, 2, callbackInterno); token.Wait() && token.Error() != nil {
+	if token := c.cliente.Subscribe(topico, 1, callbackInterno); token.Wait() && token.Error() != nil {
 		log.Printf("Error al suscribirse a %s: %v", topico, token.Error())
 	}
 }

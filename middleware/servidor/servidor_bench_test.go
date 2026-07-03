@@ -39,9 +39,8 @@ func prepararClientesHTTP(cantidad int, patron string) {
 	for i := 0; i < cantidad; i++ {
 		id := fmt.Sprintf("bench-%d", i)
 		c := &Cliente{
-			ID:         id,
-			Canal:      make(chan Mensaje, 1),
-			pendientes: map[string]struct{}{},
+			ID:    id,
+			Canal: make(chan Mensaje, 1),
 		}
 		clientesPorTopico[patron][id] = c
 		clientesPorID[id] = c

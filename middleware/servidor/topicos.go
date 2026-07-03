@@ -3,9 +3,25 @@ package servidor
 import (
 	"errors"
 	"strings"
+
+	"github.com/sensorwave-dev/sensorwave/tipos"
 )
 
 var errTopicoInvalido = errors.New("topico invalido")
+
+// EsTopicoControl indica si un tópico pertenece al plano de control federado.
+func EsTopicoControl(topico string) bool {
+	return tipos.EsTopicoControl(topico)
+}
+
+// EsTopicoPermitidoParaProtocolo indica si un tópico puede usarse en un protocolo dado.
+// swctl/# solo está permitido en MQTT.
+func EsTopicoPermitidoParaProtocolo(topico string, protocolo string) bool {
+	if !EsTopicoControl(topico) {
+		return true
+	}
+	return strings.ToLower(protocolo) == "mqtt"
+}
 
 // normalizarYValidarTopico limpia el topico y valida su formato.
 // - Quita espacios, slash inicial/final y colapsa multiples slashes.

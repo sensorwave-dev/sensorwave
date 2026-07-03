@@ -130,9 +130,6 @@ func authMiddleware(nodoID string) func(http.Handler) http.Handler {
 			token := r.Header.Get("Authorization")
 			expected := "Bearer " + nodoID
 
-			fmt.Println("Token recibido:", token)
-			fmt.Println("Token esperado:", expected)
-
 			if token != expected {
 				http.Error(w, "No autorizado", http.StatusUnauthorized)
 				return

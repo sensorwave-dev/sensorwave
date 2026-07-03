@@ -1,14 +1,12 @@
 package despachador
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"math"
-	"net/http"
 	"sort"
 	"sync"
 	"time"
@@ -31,7 +29,8 @@ type GestorDespachador struct {
 // Opciones configura la creación de un GestorDespachador.
 // El despachador SIEMPRE requiere S3 para coordinar nodos.
 type Opciones struct {
-	ConfigS3 tipos.ConfiguracionS3 // Siempre requerido
+	ConfigS3     tipos.ConfiguracionS3 // Siempre requerido
+	BrokerMQTT   string                // Broker MQTT para federación con bordes (ej: tcp://broker:1883)
 }
 
 // opcionesInternas extiende Opciones con campos para testing.
@@ -56,207 +55,6 @@ type clienteBorde interface {
 
 	// ConsultarAgregacionTemporal consulta múltiples agregaciones agrupadas por intervalos (downsampling)
 	ConsultarAgregacionTemporal(ctx context.Context, nodoID string, direccion string, req tipos.SolicitudConsultaAgregacionTemporal) (*tipos.RespuestaConsultaAgregacionTemporal, error)
-}
-
-// clienteBordeHTTP implementa clienteBorde usando HTTP directo
-type clienteBordeHTTP struct {
-	httpClient *http.Client
-}
-
-// nuevoClienteBordeHTTP crea un nuevo cliente HTTP para comunicación con bordes
-func nuevoClienteBordeHTTP() *clienteBordeHTTP {
-	return &clienteBordeHTTP{
-		httpClient: &http.Client{
-			Timeout: 10 * time.Second,
-		},
-	}
-}
-
-// ConsultarRango implementa clienteBorde
-func (c *clienteBordeHTTP) ConsultarRango(ctx context.Context, cliente string, direccion string, req tipos.SolicitudConsultaRango) (*tipos.RespuestaConsultaRango, error) {
-	// Serializar solicitud con Gob
-	solicitudBytes, err := tipos.SerializarGob(req)
-	if err != nil {
-		return nil, fmt.Errorf("error serializando solicitud: %v", err)
-	}
-
-	// Construir URL (la direccion ya incluye http://host)
-	url := fmt.Sprintf("%s/api/consulta/rango", direccion)
-
-	fmt.Println("solicitud a: " + url)
-	// Crear request con contexto
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(solicitudBytes))
-	if err != nil {
-		return nil, fmt.Errorf("error creando request: %v", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/octet-stream")
-	httpReq.Header.Set("Authorization", "Bearer "+cliente) // Usa el token
-
-	// Ejecutar request
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("error en request HTTP: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("error del borde (status %d): %s", resp.StatusCode, string(body))
-	}
-
-	// Leer respuesta
-	respuestaBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("error leyendo respuesta: %v", err)
-	}
-
-	// Deserializar respuesta
-	var respuesta tipos.RespuestaConsultaRango
-	if err := tipos.DeserializarGob(respuestaBytes, &respuesta); err != nil {
-		return nil, fmt.Errorf("error deserializando respuesta: %v", err)
-	}
-
-	return &respuesta, nil
-}
-
-// ConsultarUltimoPunto implementa clienteBorde
-func (c *clienteBordeHTTP) ConsultarUltimoPunto(ctx context.Context, nodoID string, direccion string, req tipos.SolicitudConsultaPunto) (*tipos.RespuestaConsultaPunto, error) {
-	// Serializar solicitud con Gob
-	solicitudBytes, err := tipos.SerializarGob(req)
-	if err != nil {
-		return nil, fmt.Errorf("error serializando solicitud: %v", err)
-	}
-
-	// Construir URL
-	url := fmt.Sprintf("%s/api/consulta/ultimo", direccion)
-
-	fmt.Println("solicitud a: " + url)
-
-	// Crear request con contexto
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(solicitudBytes))
-	if err != nil {
-		return nil, fmt.Errorf("error creando request: %v", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/octet-stream")
-	httpReq.Header.Set("Authorization", "Bearer "+nodoID) // Usa el token
-
-	// Ejecutar request
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("error en request HTTP: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("error del borde (status %d): %s", resp.StatusCode, string(body))
-	}
-
-	// Leer respuesta
-	respuestaBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("error leyendo respuesta: %v", err)
-	}
-
-	// Deserializar respuesta
-	var respuesta tipos.RespuestaConsultaPunto
-	if err := tipos.DeserializarGob(respuestaBytes, &respuesta); err != nil {
-		return nil, fmt.Errorf("error deserializando respuesta: %v", err)
-	}
-
-	return &respuesta, nil
-}
-
-// ConsultarAgregacion implementa clienteBorde
-func (c *clienteBordeHTTP) ConsultarAgregacion(ctx context.Context, nodoID string, direccion string, req tipos.SolicitudConsultaAgregacion) (*tipos.RespuestaConsultaAgregacion, error) {
-	// Serializar solicitud con Gob
-	solicitudBytes, err := tipos.SerializarGob(req)
-	if err != nil {
-		return nil, fmt.Errorf("error serializando solicitud: %v", err)
-	}
-
-	// Construir URL
-	url := fmt.Sprintf("%s/api/consulta/agregacion", direccion)
-
-	// Crear request con contexto
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(solicitudBytes))
-	if err != nil {
-		return nil, fmt.Errorf("error creando request: %v", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/octet-stream")
-	httpReq.Header.Set("Authorization", "Bearer "+nodoID) // Usa el token
-
-	// Ejecutar request
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("error en request HTTP: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("error del borde (status %d): %s", resp.StatusCode, string(body))
-	}
-
-	// Leer respuesta
-	respuestaBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("error leyendo respuesta: %v", err)
-	}
-
-	// Deserializar respuesta
-	var respuesta tipos.RespuestaConsultaAgregacion
-	if err := tipos.DeserializarGob(respuestaBytes, &respuesta); err != nil {
-		return nil, fmt.Errorf("error deserializando respuesta: %v", err)
-	}
-
-	return &respuesta, nil
-}
-
-// ConsultarAgregacionTemporal implementa clienteBorde
-func (c *clienteBordeHTTP) ConsultarAgregacionTemporal(ctx context.Context, nodoID string, direccion string, req tipos.SolicitudConsultaAgregacionTemporal) (*tipos.RespuestaConsultaAgregacionTemporal, error) {
-	// Serializar solicitud con Gob
-	solicitudBytes, err := tipos.SerializarGob(req)
-	if err != nil {
-		return nil, fmt.Errorf("error serializando solicitud: %v", err)
-	}
-
-	// Construir URL
-	url := fmt.Sprintf("%s/api/consulta/agregacion-temporal", direccion)
-
-	// Crear request con contexto
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(solicitudBytes))
-	if err != nil {
-		return nil, fmt.Errorf("error creando request: %v", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/octet-stream")
-	httpReq.Header.Set("Authorization", "Bearer "+nodoID) // Usa el token
-
-	// Ejecutar request
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("error en request HTTP: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("error del borde (status %d): %s", resp.StatusCode, string(body))
-	}
-
-	// Leer respuesta
-	respuestaBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("error leyendo respuesta: %v", err)
-	}
-
-	// Deserializar respuesta
-	var respuesta tipos.RespuestaConsultaAgregacionTemporal
-	if err := tipos.DeserializarGob(respuestaBytes, &respuesta); err != nil {
-		return nil, fmt.Errorf("error deserializando respuesta: %v", err)
-	}
-
-	return &respuesta, nil
 }
 
 // Crear inicializa y retorna un nuevo GestorDespachador.
@@ -299,12 +97,18 @@ func crearConOpciones(opts opcionesInternas) (*GestorDespachador, error) {
 		log.Printf("Bucket %s creado exitosamente", cfg.Bucket)
 	}
 
-	// Usar cliente Borde inyectado o crear uno HTTP real
+	// Usar cliente Borde inyectado o crear uno MQTT federado
 	var bordeClient clienteBorde
 	if opts.clienteBorde != nil {
 		bordeClient = opts.clienteBorde
+	} else if opts.BrokerMQTT != "" {
+		var err error
+		bordeClient, err = nuevoClienteBordeMQTT(opts.BrokerMQTT)
+		if err != nil {
+			return nil, fmt.Errorf("error creando cliente borde MQTT: %w", err)
+		}
 	} else {
-		bordeClient = nuevoClienteBordeHTTP()
+		return nil, fmt.Errorf("se requiere BrokerMQTT para comunicación federada con bordes")
 	}
 
 	// Crear GestorDespachador
@@ -785,9 +589,10 @@ func (m *GestorDespachador) consultarBordeConTimeout(nodo tipos.Nodo, serie stri
 
 	respuesta, err := m.clienteBorde.ConsultarRango(ctx, nodo.NodoID, nodo.Direccion, solicitud)
 	if err != nil {
-		// Timeout o error de conexión no es crítico, el borde puede estar offline
+		// Timeout o error de conexión: propagar el error para que el despachador
+		// marque el nodo como no disponible y reporte la condición al cliente.
 		log.Printf("Error consultando borde %s (serie: %s): %v", nodo.NodoID, serie, err)
-		return tipos.ResultadoConsultaRango{}, nil
+		return tipos.ResultadoConsultaRango{}, err
 	}
 
 	if respuesta.Error != "" {

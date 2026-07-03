@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/sensorwave-dev/sensorwave/middleware/internal/qos"
 )
 
 type Cliente struct {
@@ -14,24 +16,94 @@ type Cliente struct {
 	Canal   chan Mensaje
 	cerrado bool
 	mu      sync.Mutex
+}
 
-	pendientes   map[string]struct{}
-	pendientesMu sync.Mutex
+// InflightTracker rastrea mensajes QoS1 pendientes de ACK por suscriptor HTTP
+// (egreso servidor -> suscriptor), brindando deduplicación y visibilidad del
+// inflight. Clave: (MensajeID, SuscriptorID).
+//
+// El redelivery lo orquesta enviarHTTPQoS1 con backoff RFC 7252 (constantes en
+// middleware/internal/qos). La liberación de entradas ocurre por ACK explícito
+// del suscriptor (POST /sensorwave/ack) o al agotar los reintentos; y al
+// desconectarse/desuscribirse un cliente vía EliminarSuscriptor.
+type InflightTracker struct {
+	mu   sync.Mutex
+	pend map[string]map[string]struct{}
+}
+
+func NewInflightTracker() *InflightTracker {
+	return &InflightTracker{pend: make(map[string]map[string]struct{})}
+}
+
+// Registrar marca (MensajeID, SuscriptorID) como pendiente. Retorna true si
+// era nuevo (hay que iniciar el redelivery) o false si ya estaba pendiente
+// (dedup: no retransmitir de nuevo desde cero).
+func (t *InflightTracker) Registrar(mensajeID, suscriptorID string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if _, ok := t.pend[mensajeID]; !ok {
+		t.pend[mensajeID] = make(map[string]struct{})
+	}
+	if _, exists := t.pend[mensajeID][suscriptorID]; exists {
+		return false
+	}
+	t.pend[mensajeID][suscriptorID] = struct{}{}
+	return true
+}
+
+// Existe indica si (MensajeID, SuscriptorID) sigue pendiente de ACK.
+func (t *InflightTracker) Existe(mensajeID, suscriptorID string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if subs, ok := t.pend[mensajeID]; ok {
+		_, ok := subs[suscriptorID]
+		return ok
+	}
+	return false
+}
+
+// Ack confirma recepción y elimina el inflight para (MensajeID, SuscriptorID).
+func (t *InflightTracker) Ack(mensajeID, suscriptorID string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if subs, ok := t.pend[mensajeID]; ok {
+		delete(subs, suscriptorID)
+		if len(subs) == 0 {
+			delete(t.pend, mensajeID)
+		}
+	}
+}
+
+// EliminarSuscriptor borra todos los inflight asociados a un suscriptor
+// (p.ej. al desconectarse un cliente HTTP). Retorna la cantidad eliminadas.
+func (t *InflightTracker) EliminarSuscriptor(suscriptorID string) int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	n := 0
+	for mensajeID, subs := range t.pend {
+		if _, ok := subs[suscriptorID]; ok {
+			delete(subs, suscriptorID)
+			n++
+			if len(subs) == 0 {
+				delete(t.pend, mensajeID)
+			}
+		}
+	}
+	return n
 }
 
 var (
 	clientesPorTopico = make(map[string]map[string]*Cliente)
 	clientesPorID     = make(map[string]*Cliente)
 	mutexHTTP         sync.Mutex
+
+	// inflightHTTP rastrea los mensajes QoS1 pendientes de ACK por suscriptor
+	// HTTP, con backoff RFC 7252 (constantes compartidas en middleware/internal/qos).
+	inflightHTTP = NewInflightTracker()
 )
 
 const LOG_HTTP string = "HTTP"
-
-const (
-	ackTimeout         = 2 * time.Second
-	factorAleatorioAck = 1.5
-	maxRetransmisiones = 4
-)
 
 // IniciarHTTP inicia un servidor HTTP en el puerto especificado.
 // La función retorna cuando el servidor está listo para aceptar conexiones.
@@ -96,6 +168,10 @@ func manejarSuscripcionHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Topico invalido", http.StatusBadRequest)
 		return
 	}
+	if EsTopicoControl(normalizado) {
+		http.Error(w, "Tópico de control no permitido por HTTP", http.StatusForbidden)
+		return
+	}
 
 	// Configurar cabeceras SSE antes de escribir el status
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -108,10 +184,9 @@ func manejarSuscripcionHTTP(w http.ResponseWriter, r *http.Request) {
 
 	clienteID := fmt.Sprintf("%d", time.Now().UnixNano())
 	cliente := &Cliente{
-		ID:         clienteID,
-		Canal:      make(chan Mensaje, 10000),
-		cerrado:    false,
-		pendientes: make(map[string]struct{}),
+		ID:      clienteID,
+		Canal:   make(chan Mensaje, 10000),
+		cerrado: false,
 	}
 
 	mutexHTTP.Lock()
@@ -140,9 +215,7 @@ func manejarSuscripcionHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		cliente.mu.Unlock()
 
-		cliente.pendientesMu.Lock()
-		cliente.pendientes = make(map[string]struct{})
-		cliente.pendientesMu.Unlock()
+		inflightHTTP.EliminarSuscriptor(clienteID)
 
 		loggerPrint(LOG_HTTP, "Cliente desconectado - ID: %s, Tópico: %s", clienteID, normalizado)
 	}()
@@ -220,6 +293,10 @@ func manejarPublicacionHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Topico invalido", http.StatusBadRequest)
 		return
 	}
+	if EsTopicoControl(topicoQuery) {
+		http.Error(w, "Tópico de control no permitido por HTTP", http.StatusForbidden)
+		return
+	}
 
 	// Leer el cuerpo de la solicitud
 	var mensaje Mensaje
@@ -255,6 +332,12 @@ func manejarPublicacionHTTP(w http.ResponseWriter, r *http.Request) {
 	asignarOrigenSiVacio(&mensaje)
 
 	loggerPrint(LOG_HTTP, "Mensaje recibido - Tópico: %s, QoS: %d, MensajeID: %s", mensaje.Topico, mensaje.QoS, mensaje.MensajeID)
+
+	// Si el mensaje fue originado por esta instancia y regresó del upstream, no distribuir localmente
+	if esMensajeRebotado(mensaje) {
+		loggerPrint(LOG_HTTP, "Mensaje ignorado - Regresó del upstream, ya fue distribuido localmente - Tópico: %s", mensaje.Topico)
+		return
+	}
 
 	// enviar a los protocolos
 	if mensaje.Original {
@@ -312,9 +395,7 @@ func manejarDesuscripcionHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		clienteEncontrado.mu.Unlock()
 
-		clienteEncontrado.pendientesMu.Lock()
-		clienteEncontrado.pendientes = make(map[string]struct{})
-		clienteEncontrado.pendientesMu.Unlock()
+		inflightHTTP.EliminarSuscriptor(clienteID)
 
 		loggerPrint(LOG_HTTP, "Cliente desuscrito - ID: %s, Tópico: %s", clienteID, normalizado)
 		w.WriteHeader(http.StatusOK)
@@ -352,7 +433,7 @@ func manejarAckHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cliente.marcarAck(ack.MensajeID)
+	inflightHTTP.Ack(ack.MensajeID, ack.ClienteID)
 	loggerPrint(LOG_HTTP, "ACK recibido - ClienteID: %s, MensajeID: %s", ack.ClienteID, ack.MensajeID)
 	w.WriteHeader(http.StatusOK)
 }
@@ -362,14 +443,17 @@ func enviarHTTPQoS1(LOG string, c *Cliente, msg Mensaje) {
 		loggerPrint(LOG, "Error - QoS 1 sin MensajeID, no se envía")
 		return
 	}
-	if !c.registrarPendiente(msg.MensajeID) {
+	// Registrar en el tracker compartido. Si ya estaba pendiente (dedup), no
+	// iniciar un nuevo ciclo de redelivery.
+	if !inflightHTTP.Registrar(msg.MensajeID, c.ID) {
 		return
 	}
 
 	go func() {
-		delay := ackTimeout
-		for intento := 0; intento <= maxRetransmisiones; intento++ {
-			if !c.pendienteExiste(msg.MensajeID) {
+		// Backoff RFC 7252: ACK_TIMEOUT aleatorizado + ×2 por reintento.
+		delay := qos.JitterAckTimeout()
+		for intento := 0; intento <= qos.MaxRetransmisiones; intento++ {
+			if !inflightHTTP.Existe(msg.MensajeID, c.ID) {
 				return
 			}
 			select {
@@ -378,35 +462,12 @@ func enviarHTTPQoS1(LOG string, c *Cliente, msg Mensaje) {
 			default:
 				loggerPrint(LOG, "Error - No se pudo enviar mensaje QoS 1 - MensajeID: %s, Intento: %d, Razón: canal bloqueado", msg.MensajeID, intento)
 			}
-			if intento == maxRetransmisiones {
-				c.marcarAck(msg.MensajeID)
+			if intento == qos.MaxRetransmisiones {
+				inflightHTTP.Ack(msg.MensajeID, c.ID) // agotado: liberar
 				return
 			}
 			time.Sleep(delay)
-			delay = time.Duration(float64(delay) * factorAleatorioAck)
+			delay *= qos.FactorBackoff
 		}
 	}()
-}
-
-func (c *Cliente) registrarPendiente(mensajeID string) bool {
-	c.pendientesMu.Lock()
-	defer c.pendientesMu.Unlock()
-	if _, ok := c.pendientes[mensajeID]; ok {
-		return false
-	}
-	c.pendientes[mensajeID] = struct{}{}
-	return true
-}
-
-func (c *Cliente) pendienteExiste(mensajeID string) bool {
-	c.pendientesMu.Lock()
-	defer c.pendientesMu.Unlock()
-	_, ok := c.pendientes[mensajeID]
-	return ok
-}
-
-func (c *Cliente) marcarAck(mensajeID string) {
-	c.pendientesMu.Lock()
-	delete(c.pendientes, mensajeID)
-	c.pendientesMu.Unlock()
 }

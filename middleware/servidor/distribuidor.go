@@ -3,6 +3,10 @@ package servidor
 import "encoding/json"
 
 func enviarCoAP(LOG string, payload Mensaje) {
+	if EsTopicoControl(payload.Topico) {
+		return
+	}
+
 	loggerPrint(LOG, "Distribuyendo mensaje - Destino: CoAP, Tópico: %s, QoS: %d, MensajeID: %s", payload.Topico, payload.QoS, payload.MensajeID)
 
 	if err := validarQoS(payload); err != nil {
@@ -42,6 +46,10 @@ func enviarCoAP(LOG string, payload Mensaje) {
 }
 
 func enviarHTTP(LOG string, payload Mensaje) {
+	if EsTopicoControl(payload.Topico) {
+		return
+	}
+
 	loggerPrint(LOG, "Distribuyendo mensaje - Destino: HTTP, Tópico: %s, QoS: %d, MensajeID: %s", payload.Topico, payload.QoS, payload.MensajeID)
 
 	if err := validarQoS(payload); err != nil {
@@ -96,9 +104,15 @@ func enviarMQTT(LOG string, payload Mensaje) {
 		loggerPrint(LOG, "Error - No se pudo serializar mensaje: %v", err)
 		return
 	}
-	token := clienteMQTT.Publish(payload.Topico, byte(payload.QoS), false, mensajeBytes)
-	if token.Wait() && token.Error() != nil {
-		loggerPrint(LOG, "Error - No se pudo publicar mensaje: %v", token.Error())
+	// Publicación in-process al broker embebido. Llega directo a los
+	// suscriptores MQTT sin roundtrip TCP. El hook OnPublish detecta el
+	// cliente inline y omite el fanout (sin bucle/rebotado).
+	if brokerMQTT == nil {
+		loggerPrint(LOG, "Error - Broker MQTT no inicializado")
+		return
+	}
+	if err := brokerMQTT.Publish(payload.Topico, mensajeBytes, false, byte(payload.QoS)); err != nil {
+		loggerPrint(LOG, "Error - No se pudo publicar mensaje: %v", err)
 		return
 	}
 	loggerPrint(LOG, "Mensaje distribuido en MQTT - Tópico: %s, QoS: %d", payload.Topico, payload.QoS)

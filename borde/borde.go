@@ -18,7 +18,8 @@ import (
 type GestorBorde struct {
 	nodoID        string            // ID único del nodo borde
 	direccion     string            // dirección pública para uso de API REST
-	puertoHTTP    string            // Puerto HTTP para la API REST
+	puertoHTTP    string            // Puerto HTTP para la API REST (legacy, opcional)
+	brokerMQTT    string            // Broker MQTT para federación con la nube
 	tags          map[string]string // Metadatos libres del nodo (nombre, ubicación, etc.)
 	db            *pebble.DB        // Base de datos Pebble local
 	cache         *Cache            // Cache en memoria de configuraciones de series
@@ -27,6 +28,7 @@ type GestorBorde struct {
 	contador      int               // Contador para generar IDs únicos de series
 	motorReglas   *MotorReglas      // Motor de reglas integrado
 	finalizado    chan struct{}     // Canal para señalizar cierre del gestor
+	federacion    *federacionMQTT   // Worker de federación MQTT (nil si no está activo)
 }
 
 type Cache struct {
@@ -347,11 +349,12 @@ func (me *GestorBorde) comprimirPuntos(mediciones []tipos.Medicion, serie tipos.
 // Opciones configura la creación de un GestorBorde.
 // ConfigS3 es opcional (nil = modo desconectado sin sincronización con nube).
 type Opciones struct {
-	NombreDB   string                 // Nombre de la base de datos Pebble (requerido)
-	Direccion  string                 // Dirección pública para API REST (se debe pasar, SensorWave es agnóstico en cuanto a que se usa)
-	PuertoHTTP string                 // Puerto HTTP para API REST (requerido solo si ConfigS3 != nil)
-	ConfigS3   *tipos.ConfiguracionS3 // nil = modo local sin nube (debe ser explícito si se usa)
-	Tags       map[string]string      // Metadatos libres del nodo (nombre, ubicación, etc.)
+	NombreDB     string                 // Nombre de la base de datos Pebble (requerido)
+	Direccion    string                 // Dirección pública para API REST (se debe pasar, SensorWave es agnóstico en cuanto a que se usa)
+	PuertoHTTP   string                 // Puerto HTTP para API REST (opcional, legacy)
+	BrokerMQTT   string                 // Broker MQTT para federación con la nube (requerido solo si ConfigS3 != nil)
+	ConfigS3     *tipos.ConfiguracionS3 // nil = modo local sin nube (debe ser explícito si se usa)
+	Tags         map[string]string      // Metadatos libres del nodo (nombre, ubicación, etc.)
 }
 
 // Crear inicializa el GestorBorde con las opciones especificadas.
@@ -369,20 +372,25 @@ func Crear(opts Opciones) (*GestorBorde, error) {
 		return &GestorBorde{}, fmt.Errorf("Dirección es requerida")
 	}
 
-	// Validar puerto HTTP según configuración de S3
+	// Validar conexión federada según configuración de S3
 	var puertoHTTP string
 	var err error
 	if opts.ConfigS3 != nil {
-		// Con S3: puerto HTTP es requerido
-		if opts.PuertoHTTP == "" {
-			return &GestorBorde{}, fmt.Errorf("PuertoHTTP es requerido cuando ConfigS3 está configurado")
+		// Con S3: se requiere BrokerMQTT para federación con la nube
+		if opts.BrokerMQTT == "" {
+			return &GestorBorde{}, fmt.Errorf("BrokerMQTT es requerido cuando ConfigS3 está configurado")
 		}
-		puertoHTTP, err = validarPuertoHTTP(opts.PuertoHTTP)
-		if err != nil {
-			return &GestorBorde{}, err
+		if opts.PuertoHTTP != "" {
+			puertoHTTP, err = validarPuertoHTTP(opts.PuertoHTTP)
+			if err != nil {
+				return &GestorBorde{}, err
+			}
 		}
 	} else {
-		// Sin S3: puerto HTTP no debe especificarse
+		// Sin S3: no se requiere federación
+		if opts.BrokerMQTT != "" {
+			return &GestorBorde{}, fmt.Errorf("BrokerMQTT no debe especificarse sin ConfigS3")
+		}
 		if opts.PuertoHTTP != "" {
 			return &GestorBorde{}, fmt.Errorf("PuertoHTTP no debe especificarse sin ConfigS3 (no tiene sentido exponer HTTP sin registro en nube)")
 		}
@@ -399,6 +407,7 @@ func Crear(opts Opciones) (*GestorBorde, error) {
 		db:         db,
 		direccion:  opts.Direccion,
 		puertoHTTP: puertoHTTP,
+		brokerMQTT: opts.BrokerMQTT,
 		tags:       opts.Tags,
 		cache:      &Cache{datos: make(map[string]tipos.Serie)},
 		finalizado: make(chan struct{}),
@@ -514,16 +523,27 @@ func Crear(opts Opciones) (*GestorBorde, error) {
 		gestor.iniciarLimpiezaS3Automatica()
 	}
 
-	// Iniciar servidor HTTP solo si hay puerto configurado (modo conectado con S3)
+	// Iniciar federación MQTT si hay broker configurado (modo conectado con S3)
+	if opts.BrokerMQTT != "" {
+		fed, err := gestor.iniciarFederacionMQTT(opts.BrokerMQTT)
+		if err != nil {
+			db.Close()
+			return nil, fmt.Errorf("error iniciando federación MQTT: %w", err)
+		}
+		gestor.federacion = fed
+		log.Printf("Federación MQTT iniciada: %s", opts.BrokerMQTT)
+	}
+
+	// Iniciar servidor HTTP legacy solo si hay puerto configurado
 	if puertoHTTP != "" {
 		listoHTTP, err := gestor.iniciarServidorHTTP()
 		if err != nil {
     		db.Close()
-    		return nil, fmt.Errorf("modo borde-nube requiere servidor HTTP: %w", err)
+    		return nil, fmt.Errorf("error iniciando servidor HTTP: %w", err)
 		}
 		<-listoHTTP
 	}
-	
+
 	return gestor, nil
 }
 
@@ -629,6 +649,11 @@ func (me *GestorBorde) cargarSeriesExistentes() error {
 func (me *GestorBorde) Cerrar() {
 	// Señalar a todos los goroutines que deben terminar
 	close(me.finalizado)
+
+	// Cerrar federación MQTT si está activa
+	if me.federacion != nil {
+		me.federacion.cerrar()
+	}
 
 	// Cerrar todos los coordinadores individuales
 	me.coordinadores.Range(func(clave, valor interface{}) bool {

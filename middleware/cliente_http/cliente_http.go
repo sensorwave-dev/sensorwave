@@ -15,6 +15,7 @@ import (
 
 	"github.com/sensorwave-dev/sensorwave/middleware"
 	"github.com/sensorwave-dev/sensorwave/middleware/internal/mensaje"
+	"github.com/sensorwave-dev/sensorwave/middleware/internal/qos"
 )
 
 type ClienteHTTP struct {
@@ -25,12 +26,6 @@ type ClienteHTTP struct {
 }
 
 var ruta string = "/sensorwave"
-
-const (
-	ackTimeout         = 2 * time.Second
-	factorAleatorioAck = 1.5
-	maxRetransmisiones = 4
-)
 
 // Constantes de reconexión SSE
 const (
@@ -65,7 +60,7 @@ func (c *ClienteHTTP) Publicar(topico string, payload interface{}, opciones ...m
 	url := fmt.Sprintf("%s%s?topico=%s", c.baseURL, ruta, url.QueryEscape(topico))
 	if mensaje.QoS == 1 {
 		reintentos := 0
-		delay := ackTimeout
+		delay := qos.JitterAckTimeout()
 		for {
 			resp, err := c.cliente.Post(url, "application/json", bytes.NewReader(mensajeBytes))
 			if err == nil {
@@ -80,12 +75,12 @@ func (c *ClienteHTTP) Publicar(topico string, payload interface{}, opciones ...m
 					}
 				}
 			}
-			if reintentos >= maxRetransmisiones {
-				log.Printf("No se recibió ACK para mensajeId %s después de %d intentos", mensaje.MensajeID, maxRetransmisiones)
+			if reintentos >= qos.MaxRetransmisiones {
+				log.Printf("No se recibió ACK para mensajeId %s después de %d intentos", mensaje.MensajeID, qos.MaxRetransmisiones)
 				return
 			}
 			time.Sleep(delay)
-			delay = time.Duration(float64(delay) * factorAleatorioAck)
+			delay *= qos.FactorBackoff
 			reintentos++
 		}
 	}

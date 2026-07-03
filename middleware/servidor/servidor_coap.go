@@ -72,6 +72,11 @@ func manejadorCoAP(w mux.ResponseWriter, r *mux.Message) {
 	// obtengo si tiene observe
 	obs, err := r.Options().Observe()
 
+	if EsTopicoControl(normalizado) {
+		_ = w.SetResponse(codes.Forbidden, message.TextPlain, bytes.NewReader([]byte("Tópico de control no permitido por CoAP")))
+		return
+	}
+
 	// Responder según el método
 	switch {
 	// suscribirse
@@ -153,6 +158,12 @@ func manejarPublicacionCoAP(w mux.ResponseWriter, r *mux.Message, topico string,
 	err := w.SetResponse(codes.Created, message.TextPlain, nil)
 	if err != nil {
 		loggerPrint(LOG_COAP, "Error - No se pudo enviar respuesta: %v", err)
+	}
+
+	// Si el mensaje fue originado por esta instancia y regresó del upstream, no distribuir localmente
+	if esMensajeRebotado(payload) {
+		loggerPrint(LOG_COAP, "Mensaje ignorado - Regresó del upstream, ya fue distribuido localmente - Tópico: %s", payload.Topico)
+		return
 	}
 
 	// enviar publicaciones a los protocolos

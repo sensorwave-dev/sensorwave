@@ -57,6 +57,13 @@ func asignarOrigenSiVacio(m *Mensaje) {
 	m.Origen = obtenerIDInstancia()
 }
 
+// esMensajeRebotado indica si un mensaje fue originado por esta instancia
+// y regresó del upstream. En ese caso no debe distribuirse localmente otra vez.
+func esMensajeRebotado(m Mensaje) bool {
+	idLocal := obtenerIDInstancia()
+	return m.Origen != "" && m.Origen == idLocal
+}
+
 func reenviarUpstream(m Mensaje) {
 	upstreamMu.RLock()
 	cliente := clienteUpstream
