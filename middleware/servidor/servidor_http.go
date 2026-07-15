@@ -329,15 +329,17 @@ func manejarPublicacionHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	mensaje.Topico = mensajeTopico
-	asignarOrigenSiVacio(&mensaje)
 
-	loggerPrint(LOG_HTTP, "Mensaje recibido - Tópico: %s, QoS: %d, MensajeID: %s", mensaje.Topico, mensaje.QoS, mensaje.MensajeID)
-
-	// Si el mensaje fue originado por esta instancia y regresó del upstream, no distribuir localmente
+	// Detectar rebote ANTES de estampar el origen local: un mensaje que
+	// regresa del upstream ya viene con Origen == idLocal. Si estampáramos
+	// primero, todo mensaje local fresco (Orgen="") se marcaría como rebotado.
 	if esMensajeRebotado(mensaje) {
 		loggerPrint(LOG_HTTP, "Mensaje ignorado - Regresó del upstream, ya fue distribuido localmente - Tópico: %s", mensaje.Topico)
 		return
 	}
+	asignarOrigenSiVacio(&mensaje)
+
+	loggerPrint(LOG_HTTP, "Mensaje recibido - Tópico: %s, QoS: %d, MensajeID: %s", mensaje.Topico, mensaje.QoS, mensaje.MensajeID)
 
 	// enviar a los protocolos
 	if mensaje.Original {

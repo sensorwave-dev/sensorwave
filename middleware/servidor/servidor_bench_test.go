@@ -20,13 +20,18 @@ func init() {
 
 func (m *upstreamMock) Desconectar() {}
 
-func (m *upstreamMock) Publicar(topico string, mensaje interface{}, opciones ...middleware.PublicarOpcion) {
+func (m *upstreamMock) Publicar(topico string, mensaje interface{}, opciones ...middleware.PublicarOpcion) error {
 	m.publicaciones.Add(1)
+	return nil
 }
 
-func (m *upstreamMock) Suscribir(topico string, manejador middleware.CallbackFunc) {}
+func (m *upstreamMock) Suscribir(topico string, manejador middleware.CallbackFunc) error {
+	return nil
+}
 
-func (m *upstreamMock) Desuscribir(topico string) {}
+func (m *upstreamMock) Desuscribir(topico string) error {
+	return nil
+}
 
 func prepararClientesHTTP(cantidad int, patron string) {
 	mutexHTTP.Lock()

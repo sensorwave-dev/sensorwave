@@ -84,7 +84,9 @@ func reenviarUpstream(m Mensaje) {
 	}
 
 	m.Original = true
-	cliente.Publicar(m.Topico, m)
+	if err := cliente.Publicar(m.Topico, m); err != nil {
+		loggerPrint("UPSTREAM", "error reenviando %s: %v", m.Topico, err)
+	}
 }
 
 // loggerFatal imprime un mensaje en la consola de log y termina

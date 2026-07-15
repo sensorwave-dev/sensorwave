@@ -3,12 +3,14 @@ package middleware
 // Tipo de callback
 type CallbackFunc func(topico string, payload []byte)
 
-// Cliente es la interfaz común para todos los clientes de protocolo
+// Cliente es la interfaz común para todos los clientes de protocolo.
+// Los métodos que pueden fallar devuelven error categorizado
+// (ver middleware/internal/errores).
 type Cliente interface {
 	Desconectar()
-	Publicar(topico string, mensaje interface{}, opciones ...PublicarOpcion)
-	Suscribir(topico string, manejador CallbackFunc)
-	Desuscribir(topico string)
+	Publicar(topico string, mensaje interface{}, opciones ...PublicarOpcion) error
+	Suscribir(topico string, manejador CallbackFunc) error
+	Desuscribir(topico string) error
 }
 
 // PublicarOpcion es una función que modifica un mensaje antes de enviarlo

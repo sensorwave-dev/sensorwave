@@ -216,7 +216,10 @@ func ResolverPlantilla(plantilla string, params map[string]string, regla *Regla,
 //
 // Uso:
 //
-//	cliente := cliente_mqtt.Conectar("localhost", "1883")
+//	cliente, err := cliente_mqtt.Conectar("localhost", "1883")
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
 //	ejecutor := CrearEjecutorPublicar(cliente)
 //	motor.RegistrarEjecutor("publicar_mqtt", ejecutor)
 func CrearEjecutorPublicar(cliente middleware.Cliente) EjecutorAccion {
@@ -247,7 +250,9 @@ func CrearEjecutorPublicar(cliente middleware.Cliente) EjecutorAccion {
 		}
 
 		// Publicar
-		cliente.Publicar(topico, data)
+		if err := cliente.Publicar(topico, data); err != nil {
+			return fmt.Errorf("publicando en '%s': %w", topico, err)
+		}
 		log.Printf("Ejecutor: publicado en '%s' por regla '%s'", topico, regla.ID)
 
 		return nil
@@ -300,9 +305,9 @@ func RegistrarEjecutorMQTT(motor *MotorReglas, nombre, direccion, puerto string)
 		return nil, fmt.Errorf("motor de reglas no puede ser nil")
 	}
 
-	cliente := cliente_mqtt.Conectar(direccion, puerto)
-	if cliente == nil {
-		return nil, fmt.Errorf("no se pudo conectar a MQTT en %s:%s", direccion, puerto)
+	cliente, err := cliente_mqtt.Conectar(direccion, puerto)
+	if err != nil {
+		return nil, fmt.Errorf("no se pudo conectar a MQTT en %s:%s: %w", direccion, puerto, err)
 	}
 
 	ejecutor := CrearEjecutorPublicar(cliente)
@@ -324,9 +329,9 @@ func RegistrarEjecutorHTTP(motor *MotorReglas, nombre, direccion, puerto string)
 		return nil, fmt.Errorf("motor de reglas no puede ser nil")
 	}
 
-	cliente := clientehttp.Conectar(direccion, puerto)
-	if cliente == nil {
-		return nil, fmt.Errorf("no se pudo crear cliente HTTP para %s:%s", direccion, puerto)
+	cliente, err := clientehttp.Conectar(direccion, puerto)
+	if err != nil {
+		return nil, fmt.Errorf("no se pudo crear cliente HTTP para %s:%s: %w", direccion, puerto, err)
 	}
 
 	ejecutor := CrearEjecutorPublicar(cliente)
@@ -348,9 +353,9 @@ func RegistrarEjecutorCoAP(motor *MotorReglas, nombre, direccion, puerto string)
 		return nil, fmt.Errorf("motor de reglas no puede ser nil")
 	}
 
-	cliente := cliente_coap.Conectar(direccion, puerto)
-	if cliente == nil {
-		return nil, fmt.Errorf("no se pudo conectar a CoAP en %s:%s", direccion, puerto)
+	cliente, err := cliente_coap.Conectar(direccion, puerto)
+	if err != nil {
+		return nil, fmt.Errorf("no se pudo conectar a CoAP en %s:%s: %w", direccion, puerto, err)
 	}
 
 	ejecutor := CrearEjecutorPublicar(cliente)

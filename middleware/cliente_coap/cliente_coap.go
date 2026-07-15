@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/url"
 	"sync"
@@ -15,6 +16,7 @@ import (
 	"github.com/plgd-dev/go-coap/v3/udp"
 	"github.com/plgd-dev/go-coap/v3/udp/client"
 	"github.com/sensorwave-dev/sensorwave/middleware"
+	"github.com/sensorwave-dev/sensorwave/middleware/internal/errores"
 	"github.com/sensorwave-dev/sensorwave/middleware/internal/mensaje"
 )
 
@@ -38,7 +40,7 @@ type ClienteCoAP struct {
 }
 
 // conectar cliente con backoff exponencial
-func Conectar(host string, puerto string) *ClienteCoAP {
+func Conectar(host string, puerto string) (*ClienteCoAP, error) {
 	servidor := host + ":" + puerto
 
 	c := &ClienteCoAP{
@@ -48,14 +50,16 @@ func Conectar(host string, puerto string) *ClienteCoAP {
 	}
 
 	delay := backoffInicial
+	var ultimoErr error
 	for intento := 1; intento <= maxIntentosReconexion; intento++ {
 		conn, err := udp.Dial(servidor)
 		if err == nil {
 			c.cliente = conn
-			return c
+			return c, nil
 		}
+		ultimoErr = err
 		log.Printf("Error al conectarse (intento %d/%d): %v",
-			intento, maxIntentosReconexion, err)
+			intento, maxIntentosReconexion, ultimoErr)
 		if intento < maxIntentosReconexion {
 			log.Printf("Reintentando en %v...", delay)
 			time.Sleep(delay)
@@ -63,8 +67,8 @@ func Conectar(host string, puerto string) *ClienteCoAP {
 		}
 	}
 
-	log.Fatalf("No se pudo conectar al servidor CoAP después de %d intentos", maxIntentosReconexion)
-	return nil // unreachable
+	return nil, fmt.Errorf("%w: no se pudo conectar al servidor CoAP después de %d intentos: %v",
+		errores.ErrConexion, maxIntentosReconexion, ultimoErr)
 }
 
 // cerrar cliente
@@ -78,18 +82,16 @@ func (c *ClienteCoAP) Desconectar() {
 }
 
 // publicar
-func (c *ClienteCoAP) Publicar(topico string, payload interface{}, opciones ...middleware.PublicarOpcion) {
+func (c *ClienteCoAP) Publicar(topico string, payload interface{}, opciones ...middleware.PublicarOpcion) error {
 	mensaje, err := mensaje.Construir(topico, payload, opciones...)
 	if err != nil {
-		log.Printf("Error al construir mensaje: %v", err)
-		return
+		return fmt.Errorf("%w: %v", errores.ErrPublicacion, err)
 	}
 
 	// Serializar el mensaje a JSON
 	mensajeBytes, err := json.Marshal(mensaje)
 	if err != nil {
-		log.Printf("Error al serializar el mensaje: %v", err)
-		return
+		return fmt.Errorf("%w: %v", errores.ErrPublicacion, err)
 	}
 
 	// publicar en el recurso
@@ -97,22 +99,21 @@ func (c *ClienteCoAP) Publicar(topico string, payload interface{}, opciones ...m
 	query := message.Option{ID: message.URIQuery, Value: []byte("topico=" + url.QueryEscape(topico))}
 	req, err := c.cliente.NewPostRequest(ctx, ruta, message.TextPlain, bytes.NewReader(mensajeBytes), query)
 	if err != nil {
-		log.Printf("Error al crear la solicitud: %v", err)
-		return
+		return fmt.Errorf("%w: %s: %v", errores.ErrPublicacion, topico, err)
 	}
 	if mensaje.QoS == 1 {
 		req.SetType(message.Confirmable)
 	} else {
 		req.SetType(message.NonConfirmable)
 	}
-	_, err = c.cliente.Do(req)
-	if err != nil {
-		log.Printf("Error al publicar en %s: %v", topico, err)
+	if _, err := c.cliente.Do(req); err != nil {
+		return fmt.Errorf("%w: %s: %v", errores.ErrPublicacion, topico, err)
 	}
+	return nil
 }
 
 // suscribir a tópico
-func (c *ClienteCoAP) Suscribir(topico string, callback middleware.CallbackFunc) {
+func (c *ClienteCoAP) Suscribir(topico string, callback middleware.CallbackFunc) error {
 	// subscribe al recurso
 	ctx := context.Background()
 	query := message.Option{ID: message.URIQuery, Value: []byte("topico=" + url.QueryEscape(topico))}
@@ -133,29 +134,31 @@ func (c *ClienteCoAP) Suscribir(topico string, callback middleware.CallbackFunc)
 	}
 	observation, err := c.cliente.Observe(ctx, ruta, callbackInterno, query)
 	if err != nil {
-		log.Printf("Error al observar %s: %v", topico, err)
-		return
+		return fmt.Errorf("%w: %s: %v", errores.ErrSuscripcion, topico, err)
 	}
 
 	c.mu.Lock()
 	c.observaciones[topico] = observation
 	c.callbacks[topico] = callback
 	c.mu.Unlock()
+	return nil
 }
 
-// se desuscribe a un topico
-func (c *ClienteCoAP) Desuscribir(topico string) {
+// se desuscribe a un topico. Idempotente: retorna nil si el tópico no estaba
+// observado. Devuelve error sólo si falla la cancelación de red.
+func (c *ClienteCoAP) Desuscribir(topico string) error {
 	c.mu.Lock()
 	observation, ok := c.observaciones[topico]
 	if !ok {
 		c.mu.Unlock()
-		return
+		return nil
 	}
 	delete(c.observaciones, topico)
 	delete(c.callbacks, topico)
 	c.mu.Unlock()
 
 	if err := observation.Cancel(context.Background()); err != nil {
-		log.Printf("Error al cancelar observación de %s: %v", topico, err)
+		return fmt.Errorf("%w: %s: %v", errores.ErrDesuscripcion, topico, err)
 	}
+	return nil
 }

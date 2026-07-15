@@ -2,6 +2,8 @@ package borde
 
 import (
 	"encoding/json"
+	"fmt"
+	"strings"
 	"sync"
 	"testing"
 
@@ -313,7 +315,7 @@ func (m *mockCliente) Desconectar() {
 	m.conectado = false
 }
 
-func (m *mockCliente) Publicar(topico string, mensaje interface{}, opciones ...middleware.PublicarOpcion) {
+func (m *mockCliente) Publicar(topico string, mensaje interface{}, opciones ...middleware.PublicarOpcion) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -328,14 +330,17 @@ func (m *mockCliente) Publicar(topico string, mensaje interface{}, opciones ...m
 	}
 
 	m.mensajes = append(m.mensajes, mockMensaje{topico: topico, payload: data})
+	return nil
 }
 
-func (m *mockCliente) Suscribir(topico string, manejador middleware.CallbackFunc) {
+func (m *mockCliente) Suscribir(topico string, manejador middleware.CallbackFunc) error {
 	// No implementado para tests
+	return nil
 }
 
-func (m *mockCliente) Desuscribir(topico string) {
+func (m *mockCliente) Desuscribir(topico string) error {
 	// No implementado para tests
+	return nil
 }
 
 func (m *mockCliente) obtenerMensajes() []mockMensaje {
@@ -549,5 +554,49 @@ func TestCrearEjecutorPublicar_ParametrosFiltrados(t *testing.T) {
 	// Verificar otros parámetros
 	if payload.Parametros["velocidad"] != "alta" {
 		t.Error("velocidad debería estar en Parametros")
+	}
+}
+
+// --- Tests de propagación de errores de Publicar ---
+
+type mockClienteFalla struct {
+	errPublicar error
+}
+
+func (m *mockClienteFalla) Desconectar() {}
+
+func (m *mockClienteFalla) Publicar(topico string, mensaje interface{}, opciones ...middleware.PublicarOpcion) error {
+	return m.errPublicar
+}
+
+func (m *mockClienteFalla) Suscribir(topico string, manejador middleware.CallbackFunc) error {
+	return nil
+}
+
+func (m *mockClienteFalla) Desuscribir(topico string) error {
+	return nil
+}
+
+func TestCrearEjecutorPublicar_PropagaErrorPublicar(t *testing.T) {
+	pubErr := fmt.Errorf("fallo de red")
+	ejecutor := CrearEjecutorPublicar(&mockClienteFalla{errPublicar: pubErr})
+
+	accion := Accion{
+		Destino: "actuadores/nodo_01",
+		Parametros: map[string]string{
+			"comando": "encender",
+		},
+	}
+	regla := &Regla{ID: "test"}
+
+	err := ejecutor(accion, regla, nil)
+	if err == nil {
+		t.Fatal("esperaba error propagado de Publicar")
+	}
+	if !strings.Contains(err.Error(), "publicando en 'actuadores/nodo_01'") {
+		t.Errorf("el error debería mencionar el tópico: %v", err)
+	}
+	if !strings.Contains(err.Error(), "fallo de red") {
+		t.Errorf("el error debería contener la causa: %v", err)
 	}
 }
