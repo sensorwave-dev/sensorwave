@@ -14,6 +14,7 @@ import (
 	"github.com/plgd-dev/go-coap/v3/message"
 	"github.com/plgd-dev/go-coap/v3/message/codes"
 	"github.com/plgd-dev/go-coap/v3/mux"
+	"github.com/sensorwave-dev/sensorwave/middleware"
 )
 
 const LOG_COAP = "COAP"
@@ -63,7 +64,7 @@ func manejadorCoAP(w mux.ResponseWriter, r *mux.Message) {
 	}
 
 	permitirWildcards := metodo == codes.GET
-	normalizado, err := normalizarYValidarTopico(topico, permitirWildcards)
+	normalizado, err := middleware.NormalizarYValidarTopico(topico, permitirWildcards)
 	if err != nil {
 		_ = w.SetResponse(codes.BadRequest, message.TextPlain, bytes.NewReader([]byte("Topico invalido")))
 		return
@@ -72,7 +73,7 @@ func manejadorCoAP(w mux.ResponseWriter, r *mux.Message) {
 	// obtengo si tiene observe
 	obs, err := r.Options().Observe()
 
-	if EsTopicoControl(normalizado) {
+	if middleware.EsTopicoControl(normalizado) {
 		_ = w.SetResponse(codes.Forbidden, message.TextPlain, bytes.NewReader([]byte("Tópico de control no permitido por CoAP")))
 		return
 	}
@@ -105,7 +106,7 @@ func manejadorCoAP(w mux.ResponseWriter, r *mux.Message) {
 			_ = w.SetResponse(codes.BadRequest, message.TextPlain, bytes.NewReader([]byte("Falta el parámetro 'topico'")))
 			return
 		}
-		mensajeTopico, err := normalizarYValidarTopico(mensaje.Topico, false)
+		mensajeTopico, err := middleware.NormalizarYValidarTopico(mensaje.Topico, false)
 		if err != nil {
 			_ = w.SetResponse(codes.BadRequest, message.TextPlain, bytes.NewReader([]byte("Topico invalido")))
 			return

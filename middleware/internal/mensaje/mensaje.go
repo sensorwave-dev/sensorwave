@@ -16,9 +16,18 @@ const tamanoMaximoPayload = 65536
 var errQoSInvalido = errors.New("qos invalido")
 var errPayloadMuyGrande = errors.New("payload demasiado grande")
 
-// Construir crea un mensaje a partir de un payload y opciones
+// Construir crea un mensaje a partir de un payload y opciones. Canoniza el
+// tópico mediante middleware.NormalizarYValidarTopico (sin wildcards: un
+// mensaje de publicación no puede contener + ni #). Si payload ya es un
+// middleware.Mensaje con su propio Topico, también se canoniza y debe
+// coincidir con el canon del parámetro topico.
 func Construir(topico string, payload interface{}, opciones ...middleware.PublicarOpcion) (middleware.Mensaje, error) {
-	mensaje := middleware.Mensaje{Original: true, Topico: topico, Interno: false}
+	canon, err := middleware.NormalizarYValidarTopico(topico, false)
+	if err != nil {
+		return middleware.Mensaje{}, err
+	}
+
+	mensaje := middleware.Mensaje{Original: true, Topico: canon, Interno: false}
 
 	switch v := payload.(type) {
 	case middleware.Mensaje:
@@ -52,10 +61,20 @@ func Construir(topico string, payload interface{}, opciones ...middleware.Public
 		mensaje.Payload = data
 	}
 
-	if mensaje.Topico == "" {
-		mensaje.Topico = topico
+	// Canonizar el Topico que vino dentro del mensaje (si el payload era un
+	// middleware.Mensaje ya poblado). Debe coincidir con el canon del
+	// parámetro topico tras canonización.
+	if mensaje.Topico != "" {
+		canonMsg, err := middleware.NormalizarYValidarTopico(mensaje.Topico, false)
+		if err != nil {
+			return middleware.Mensaje{}, err
+		}
+		mensaje.Topico = canonMsg
 	}
-	if mensaje.Topico != topico {
+	if mensaje.Topico == "" {
+		mensaje.Topico = canon
+	}
+	if mensaje.Topico != canon {
 		return middleware.Mensaje{}, errors.New("el tópico del mensaje no coincide con el parámetro topico")
 	}
 

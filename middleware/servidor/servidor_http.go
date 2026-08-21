@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sensorwave-dev/sensorwave/middleware"
 	"github.com/sensorwave-dev/sensorwave/middleware/internal/qos"
 )
 
@@ -163,12 +164,12 @@ func manejarSuscripcionHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	normalizado, err := normalizarYValidarTopico(topico, true)
+	normalizado, err := middleware.NormalizarYValidarTopico(topico, true)
 	if err != nil {
 		http.Error(w, "Topico invalido", http.StatusBadRequest)
 		return
 	}
-	if EsTopicoControl(normalizado) {
+	if middleware.EsTopicoControl(normalizado) {
 		http.Error(w, "Tópico de control no permitido por HTTP", http.StatusForbidden)
 		return
 	}
@@ -288,12 +289,12 @@ func manejarPublicacionHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	topicoQuery, err := normalizarYValidarTopico(topicoQuery, false)
+	topicoQuery, err := middleware.NormalizarYValidarTopico(topicoQuery, false)
 	if err != nil {
 		http.Error(w, "Topico invalido", http.StatusBadRequest)
 		return
 	}
-	if EsTopicoControl(topicoQuery) {
+	if middleware.EsTopicoControl(topicoQuery) {
 		http.Error(w, "Tópico de control no permitido por HTTP", http.StatusForbidden)
 		return
 	}
@@ -311,7 +312,7 @@ func manejarPublicacionHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	mensajeTopico, err := normalizarYValidarTopico(mensaje.Topico, false)
+	mensajeTopico, err := middleware.NormalizarYValidarTopico(mensaje.Topico, false)
 	if err != nil {
 		http.Error(w, "Topico invalido", http.StatusBadRequest)
 		return
@@ -370,7 +371,7 @@ func manejarDesuscripcionHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	normalizado, err := normalizarYValidarTopico(topico, true)
+	normalizado, err := middleware.NormalizarYValidarTopico(topico, true)
 	if err != nil {
 		http.Error(w, "Topico invalido", http.StatusBadRequest)
 		return

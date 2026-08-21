@@ -1,9 +1,13 @@
 package servidor
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"github.com/sensorwave-dev/sensorwave/middleware"
+)
 
 func enviarCoAP(LOG string, payload Mensaje) {
-	if EsTopicoControl(payload.Topico) {
+	if middleware.EsTopicoControl(payload.Topico) {
 		return
 	}
 
@@ -14,7 +18,7 @@ func enviarCoAP(LOG string, payload Mensaje) {
 		return
 	}
 
-	publicacion, err := normalizarYValidarTopico(payload.Topico, false)
+	publicacion, err := middleware.NormalizarYValidarTopico(payload.Topico, false)
 	if err != nil {
 		loggerPrint(LOG, "Error - Tópico inválido para CoAP: %v", payload.Topico)
 		return
@@ -46,7 +50,7 @@ func enviarCoAP(LOG string, payload Mensaje) {
 }
 
 func enviarHTTP(LOG string, payload Mensaje) {
-	if EsTopicoControl(payload.Topico) {
+	if middleware.EsTopicoControl(payload.Topico) {
 		return
 	}
 
@@ -57,7 +61,7 @@ func enviarHTTP(LOG string, payload Mensaje) {
 		return
 	}
 
-	publicacion, err := normalizarYValidarTopico(payload.Topico, false)
+	publicacion, err := middleware.NormalizarYValidarTopico(payload.Topico, false)
 	if err != nil {
 		loggerPrint(LOG, "Error - Tópico inválido para HTTP: %v", payload.Topico)
 		return

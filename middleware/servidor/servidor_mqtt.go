@@ -8,7 +8,7 @@ import (
 	"github.com/mochi-mqtt/server/v2/hooks/auth"
 	"github.com/mochi-mqtt/server/v2/listeners"
 	"github.com/mochi-mqtt/server/v2/packets"
-	"github.com/sensorwave-dev/sensorwave/tipos"
+	"github.com/sensorwave-dev/sensorwave/middleware"
 )
 
 const LOG_MQTT = "MQTT"
@@ -34,7 +34,7 @@ type hookMQTT struct {
 func (h *hookMQTT) ID() string { return "sensorwave-mqtt" }
 
 func (h *hookMQTT) Provides(b byte) bool {
-	return b == mochi.OnPublish
+	return b == mochi.OnPublish || b == mochi.OnSubscribe || b == mochi.OnUnsubscribe
 }
 
 // OnPublish maneja los PUBLISHes entrantes de clientes externos.
@@ -53,7 +53,7 @@ func (h *hookMQTT) OnPublish(cl *mochi.Client, pk packets.Packet) (packets.Packe
 		return pk, nil
 	}
 
-	topicoMQTT, err := normalizarYValidarTopico(pk.TopicName, false)
+	topicoMQTT, err := middleware.NormalizarYValidarTopico(pk.TopicName, false)
 	if err != nil {
 		loggerPrint(LOG_MQTT, "Error - Tópico inválido: %v", pk.TopicName)
 		return pk, packets.ErrRejectPacket
@@ -68,7 +68,8 @@ func (h *hookMQTT) OnPublish(cl *mochi.Client, pk packets.Packet) (packets.Packe
 		loggerPrint(LOG_MQTT, "Error - Mensaje sin tópico en body")
 		return pk, packets.ErrRejectPacket
 	}
-	mensajeTopico, err := normalizarYValidarTopico(mensaje.Topico, false)
+	
+	mensajeTopico, err := middleware.NormalizarYValidarTopico(mensaje.Topico, false)
 	if err != nil {
 		loggerPrint(LOG_MQTT, "Error - Tópico en body inválido: %v", mensaje.Topico)
 		return pk, packets.ErrRejectPacket
@@ -85,6 +86,11 @@ func (h *hookMQTT) OnPublish(cl *mochi.Client, pk packets.Packet) (packets.Packe
 		loggerPrint(LOG_MQTT, "Error - Tópico MQTT y body no coincieren: %s != %s", topicoMQTT, mensajeTopico)
 		return pk, packets.ErrRejectPacket
 	}
+	// Canonizamos el topic del paquete para que el broker rutee a suscriptores
+	// usando la misma forma que usamos al normalizar filtros en OnSubscribe.
+	// Sin esto, un publicador que use /test rutea por "/test" y un suscriptor
+	// a "test" nunca recibe (mochi compara filtro vs TopicName crudos).
+	pk.TopicName = topicoMQTT
 	mensaje.Topico = mensajeTopico
 	asignarOrigenSiVacio(&mensaje)
 	loggerPrint(LOG_MQTT, "Mensaje recibido - Tópico: %s, QoS: %d, MensajeID: %s", mensaje.Topico, mensaje.QoS, mensaje.MensajeID)
@@ -93,7 +99,7 @@ func (h *hookMQTT) OnPublish(cl *mochi.Client, pk packets.Packet) (packets.Packe
 	// retornar nil. Acá sólo disparamos el fanout hacia los otros protocolos.
 	if mensaje.Original {
 		mensaje.Original = false
-		if tipos.EsTopicoControl(mensaje.Topico) {
+		if middleware.EsTopicoControl(mensaje.Topico) {
 			// Plano de control: solo federación upstream, no fanout a HTTP/CoAP.
 			go reenviarUpstream(mensaje)
 			return pk, nil
@@ -104,6 +110,58 @@ func (h *hookMQTT) OnPublish(cl *mochi.Client, pk packets.Packet) (packets.Packe
 	}
 
 	return pk, nil
+}
+
+// OnSubscribe canoniza cada filtro de suscripción antes de que el broker lo
+// registre. Esto garantiza simetría: un cliente suscrito a /test y un publicador
+// a test ruteen al mismo filtro interno "test". Los filtros inválidos o del
+// plano de control (swctl/...) se reemplazan por "" para que mochi los rechace
+// en el SUBACK con ErrTopicFilterInvalid. El cliente inline del middleware queda
+// exento (sus tópicos ya vienen canonizados).
+func (h *hookMQTT) OnSubscribe(cl *mochi.Client, pk packets.Packet) packets.Packet {
+	if cl.Net.Inline {
+		return pk
+	}
+	for i := range pk.Filters {
+		filtro := pk.Filters[i].Filter
+		if strings.HasPrefix(filtro, "$SYS/") {
+			continue
+		}
+		canon, err := middleware.NormalizarYValidarTopico(filtro, true)
+		if err != nil {
+			loggerPrint(LOG_MQTT, "Error - Filtro de suscripción inválido: %s", filtro)
+			pk.Filters[i].Filter = ""
+			continue
+		}
+		if middleware.EsTopicoControl(canon) {
+			loggerPrint(LOG_MQTT, "Error - Filtro de control no permitido en suscripción MQTT externa: %s", filtro)
+			pk.Filters[i].Filter = ""
+			continue
+		}
+		pk.Filters[i].Filter = canon
+	}
+	return pk
+}
+
+// OnUnsubscribe canoniza los filtros de UNSUBSCRIBE con el mismo criterio que
+// OnSubscribe, de modo que un cliente que se suscribió vía /test pueda
+// desuscribirse con test (o viceversa) y mochi encuentre la suscripción.
+func (h *hookMQTT) OnUnsubscribe(cl *mochi.Client, pk packets.Packet) packets.Packet {
+	if cl.Net.Inline {
+		return pk
+	}
+	for i := range pk.Filters {
+		filtro := pk.Filters[i].Filter
+		if strings.HasPrefix(filtro, "$SYS/") {
+			continue
+		}
+		canon, err := middleware.NormalizarYValidarTopico(filtro, true)
+		if err != nil {
+			continue
+		}
+		pk.Filters[i].Filter = canon
+	}
+	return pk
 }
 
 // IniciarMQTT arranca el broker MQTT embebido en el puerto indicado.

@@ -18,12 +18,21 @@ import (
 )
 
 type GestorDespachador struct {
-	nodos        map[string]*tipos.Nodo
-	mu           sync.RWMutex
-	s3           tipos.ClienteS3
-	config       tipos.ConfiguracionS3
-	finalizado   chan struct{}
-	clienteBorde clienteBorde
+	nodos          map[string]*tipos.Nodo
+	mu             sync.RWMutex
+	s3             tipos.ClienteS3
+	config         tipos.ConfiguracionS3
+	finalizado     chan struct{}
+	clienteBorde   clienteBorde
+	timeoutBorde   time.Duration
+}
+
+// timeoutBordeEfectivo retorna el timeout configurado o 5s por defecto.
+func (m *GestorDespachador) timeoutBordeEfectivo() time.Duration {
+	if m.timeoutBorde > 0 {
+		return m.timeoutBorde
+	}
+	return 5 * time.Second
 }
 
 // Opciones configura la creación de un GestorDespachador.
@@ -31,6 +40,7 @@ type GestorDespachador struct {
 type Opciones struct {
 	ConfigS3     tipos.ConfiguracionS3 // Siempre requerido
 	BrokerMQTT   string                // Broker MQTT para federación con bordes (ej: tcp://broker:1883)
+	TimeoutBorde time.Duration         // Timeout para consultas a bordes federados (0 = default 5s)
 }
 
 // opcionesInternas extiende Opciones con campos para testing.
@@ -118,6 +128,7 @@ func crearConOpciones(opts opcionesInternas) (*GestorDespachador, error) {
 		nodos:        make(map[string]*tipos.Nodo),
 		finalizado:   make(chan struct{}),
 		clienteBorde: bordeClient,
+		timeoutBorde: opts.TimeoutBorde,
 	}
 
 	// Cargar nodos iniciales desde S3
@@ -758,7 +769,7 @@ func (m *GestorDespachador) ConsultarRango(nombreSerie string, tiempoInicio, tie
 			datosS3, errS3 = m.consultarDatosS3(sn.nodo, sn.serie, inicio, fin)
 
 			// Consultar borde
-			datosBorde, errBorde = m.consultarBordeConTimeout(sn.nodo, sn.path, inicio, fin, 5*time.Second)
+			datosBorde, errBorde = m.consultarBordeConTimeout(sn.nodo, sn.path, inicio, fin, m.timeoutBordeEfectivo())
 
 			resultados <- resultadoSerie{
 				resultado: m.combinarResultadosTabular(datosS3, datosBorde, sn.path),
@@ -857,7 +868,7 @@ func (m *GestorDespachador) ConsultarUltimoPunto(nombreSerie string, tiempoInici
 			bordeError := false
 
 			// Primero intentar con el borde (tiene datos más recientes)
-			resBorde, err := m.consultarPuntoBorde(sn.nodo, sn.path, tiempoInicio, tiempoFin, 5*time.Second)
+			resBorde, err := m.consultarPuntoBorde(sn.nodo, sn.path, tiempoInicio, tiempoFin, m.timeoutBordeEfectivo())
 			if err != nil {
 				bordeError = true
 				log.Printf("Advertencia: error consultando borde para serie %s: %v", sn.path, err)

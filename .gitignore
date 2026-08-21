@@ -2,3 +2,4 @@
 **/*.db/
 RESUMEN_SELECT.md
 /test/
+/test_elektron/
