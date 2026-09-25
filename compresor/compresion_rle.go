@@ -33,7 +33,7 @@ Algoritmo:
 Restricciones:
 
 • Máximo 255 repeticiones por par (límite de u8)
-• Comparación mediante == para tipos comparables
+• float64 se compara por bits IEEE 754; el resto, con ==
 • Formato little-endian para serialización
 • Para strings se usa serialización de longitud variable
 
@@ -46,10 +46,20 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"math"
 )
 
 // CompresorRLEGenerico implementa el algoritmo de compresión RLE para tipos comparables
 type CompresorRLEGenerico[T comparable] struct{}
+
+func iguales[T comparable](a, b T) bool {
+	af, aok := any(a).(float64)
+	bf, bok := any(b).(float64)
+	if aok && bok {
+		return math.Float64bits(af) == math.Float64bits(bf)
+	}
+	return a == b
+}
 
 // Comprimir comprime una serie de valores usando RLE
 // Para tipos numéricos y booleanos usa binary.Write
@@ -64,7 +74,7 @@ func (c *CompresorRLEGenerico[T]) Comprimir(valores []T) ([]byte, error) {
 	cantidad := uint8(1)
 
 	for i := 1; i < len(valores); i++ {
-		if valores[i] == valorPrevio && cantidad < 255 {
+		if iguales(valores[i], valorPrevio) && cantidad < 255 {
 			cantidad++
 		} else {
 			// Escribir el par (cantidad, valorPrevio)

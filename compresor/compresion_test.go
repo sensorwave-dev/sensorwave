@@ -183,6 +183,22 @@ func TestCompresorRLE_Float64(t *testing.T) {
 	}
 }
 
+func TestCompresorRLE_CeroConSigno(t *testing.T) {
+	c := &CompresorRLEGenerico[float64]{}
+	valores := []float64{0, math.Copysign(0, -1), 0}
+
+	comprimido, err := c.Comprimir(valores)
+	require.NoError(t, err)
+
+	descomprimido, err := c.Descomprimir(comprimido)
+	require.NoError(t, err)
+
+	require.Len(t, descomprimido, len(valores))
+	for i := range valores {
+		assert.Equal(t, math.Float64bits(valores[i]), math.Float64bits(descomprimido[i]))
+	}
+}
+
 func TestCompresorRLE_Bool(t *testing.T) {
 	c := &CompresorRLEGenerico[bool]{}
 
@@ -359,6 +375,7 @@ func TestCompresorBits_Int64(t *testing.T) {
 		{"rango_0_255", []int64{0, 128, 255}},
 		{"todos_iguales", []int64{100, 100, 100, 100}},
 		{"valores_negativos", []int64{-10, -5, 0, 5, 10}},
+		{"extremos", []int64{math.MinInt64, math.MaxInt64}},
 	}
 
 	for _, tc := range casosDePrueba {
@@ -448,6 +465,42 @@ func TestCompresorXor_EficienciaValoresSimilares(t *testing.T) {
 	assert.Equal(t, valores, descomprimido)
 	// Deberia comprimir bien porque los XOR tienen muchos ceros
 	assert.Less(t, len(comprimido), 800) // 100 float64 = 800 bytes
+}
+
+func TestCompresorXor_UnULP(t *testing.T) {
+	c := &CompresorXor{}
+	valores := []float64{1.0, math.Nextafter(1.0, 2)}
+
+	comprimido, err := c.Comprimir(valores)
+	require.NoError(t, err)
+
+	descomprimido, err := c.Descomprimir(comprimido)
+	require.NoError(t, err)
+
+	require.Len(t, descomprimido, len(valores))
+	for i := range valores {
+		assert.Equal(t, math.Float64bits(valores[i]), math.Float64bits(descomprimido[i]))
+	}
+}
+
+func TestCompresorXor_SesentaYCuatroBits(t *testing.T) {
+	c := &CompresorXor{}
+	valores := []float64{
+		math.Float64frombits(0),
+		math.Float64frombits(0x8000000000000001),
+		1.0,
+	}
+
+	comprimido, err := c.Comprimir(valores)
+	require.NoError(t, err)
+
+	descomprimido, err := c.Descomprimir(comprimido)
+	require.NoError(t, err)
+
+	require.Len(t, descomprimido, len(valores))
+	for i := range valores {
+		assert.Equal(t, math.Float64bits(valores[i]), math.Float64bits(descomprimido[i]))
+	}
 }
 
 // =============================================================================
@@ -572,16 +625,16 @@ func TestCompresores_CasosBorde_ArrayGrande(t *testing.T) {
 // =============================================================================
 // Tests de compatibilidad de algoritmos con tipos de datos
 // Segun tipo_datos.go:
-// - Boolean: SinCompresion, RLE
-// - Integer: SinCompresion, DeltaDelta, RLE, Bits
-// - Real: SinCompresion, DeltaDelta, Xor, RLE
-// - Text: SinCompresion, RLE, Diccionario
+// - Boolean: SinCompresionBytes, RLE
+// - Integer: SinCompresionBytes, DeltaDelta, RLE, Bits
+// - Real: SinCompresionBytes, DeltaDelta, Xor, RLE
+// - Text: SinCompresionBytes, RLE, Diccionario
 // =============================================================================
 
 func TestCompatibilidadTipos_Boolean(t *testing.T) {
 	valores := []bool{true, true, false, true, false, false}
 
-	t.Run("SinCompresion", func(t *testing.T) {
+	t.Run("SinCompresionBytes", func(t *testing.T) {
 		c := &CompresorNingunoGenerico[bool]{}
 		comprimido, err := c.Comprimir(valores)
 		require.NoError(t, err)
@@ -603,7 +656,7 @@ func TestCompatibilidadTipos_Boolean(t *testing.T) {
 func TestCompatibilidadTipos_Integer(t *testing.T) {
 	valores := []int64{100, 110, 120, 130, 140, 150}
 
-	t.Run("SinCompresion", func(t *testing.T) {
+	t.Run("SinCompresionBytes", func(t *testing.T) {
 		c := &CompresorNingunoGenerico[int64]{}
 		comprimido, err := c.Comprimir(valores)
 		require.NoError(t, err)
@@ -644,7 +697,7 @@ func TestCompatibilidadTipos_Integer(t *testing.T) {
 func TestCompatibilidadTipos_Real(t *testing.T) {
 	valores := []float64{25.0, 25.1, 25.2, 25.3, 25.4}
 
-	t.Run("SinCompresion", func(t *testing.T) {
+	t.Run("SinCompresionBytes", func(t *testing.T) {
 		c := &CompresorNingunoGenerico[float64]{}
 		comprimido, err := c.Comprimir(valores)
 		require.NoError(t, err)
@@ -685,7 +738,7 @@ func TestCompatibilidadTipos_Real(t *testing.T) {
 func TestCompatibilidadTipos_Text(t *testing.T) {
 	valores := []string{"activo", "activo", "inactivo", "error"}
 
-	t.Run("SinCompresion", func(t *testing.T) {
+	t.Run("SinCompresionBytes", func(t *testing.T) {
 		c := &CompresorNingunoGenerico[string]{}
 		comprimido, err := c.Comprimir(valores)
 		require.NoError(t, err)
@@ -714,7 +767,7 @@ func TestCompatibilidadTipos_Text(t *testing.T) {
 }
 
 // =============================================================================
-// Tests para Compresores de Bloque (LZ4, ZSTD, Snappy, Gzip, Ninguna)
+// Tests para Compresores de Bloque (LZ4, ZSTD, Snappy, Gzip, SinCompresionBloque)
 // =============================================================================
 
 func TestCompresorBloque_LZ4(t *testing.T) {
@@ -791,7 +844,7 @@ func TestObtenerCompresorBloque(t *testing.T) {
 		{tipos.ZSTD, "*CompresorZSTD"},
 		{tipos.Snappy, "*CompresorSnappy"},
 		{tipos.Gzip, "*CompresorGzip"},
-		{tipos.Ninguna, "*CompresorBloqueNinguno"},
+		{tipos.SinCompresionBloque, "*CompresorBloqueNinguno"},
 		{tipos.TipoCompresionBloque("desconocido"), "*CompresorBloqueNinguno"}, // default
 	}
 
@@ -1255,7 +1308,7 @@ func crearBloqueComprimido(t *testing.T, mediciones []tipos.Medicion, tipoDatos 
 		case tipos.Bits:
 			c := &CompresorBitsGenerico[int64]{}
 			valoresComprimidos, err = c.Comprimir(valores)
-		case tipos.SinCompresion:
+		case tipos.SinCompresionBytes:
 			c := &CompresorNingunoGenerico[int64]{}
 			valoresComprimidos, err = c.Comprimir(valores)
 		}
@@ -1274,7 +1327,7 @@ func crearBloqueComprimido(t *testing.T, mediciones []tipos.Medicion, tipoDatos 
 		case tipos.RLE:
 			c := &CompresorRLEGenerico[float64]{}
 			valoresComprimidos, err = c.Comprimir(valores)
-		case tipos.SinCompresion:
+		case tipos.SinCompresionBytes:
 			c := &CompresorNingunoGenerico[float64]{}
 			valoresComprimidos, err = c.Comprimir(valores)
 		}
@@ -1287,7 +1340,7 @@ func crearBloqueComprimido(t *testing.T, mediciones []tipos.Medicion, tipoDatos 
 		case tipos.RLE:
 			c := &CompresorRLEGenerico[bool]{}
 			valoresComprimidos, err = c.Comprimir(valores)
-		case tipos.SinCompresion:
+		case tipos.SinCompresionBytes:
 			c := &CompresorNingunoGenerico[bool]{}
 			valoresComprimidos, err = c.Comprimir(valores)
 		}
@@ -1303,7 +1356,7 @@ func crearBloqueComprimido(t *testing.T, mediciones []tipos.Medicion, tipoDatos 
 		case tipos.RLE:
 			c := &CompresorRLEGenerico[string]{}
 			valoresComprimidos, err = c.Comprimir(valores)
-		case tipos.SinCompresion:
+		case tipos.SinCompresionBytes:
 			c := &CompresorNingunoGenerico[string]{}
 			valoresComprimidos, err = c.Comprimir(valores)
 		}
@@ -1387,9 +1440,9 @@ func TestDescomprimirBloqueSerie_Integer_SinCompresion(t *testing.T) {
 		{Tiempo: 1000001000, Valor: int64(200)},
 	}
 
-	bloque := crearBloqueComprimido(t, mediciones, tipos.Integer, tipos.SinCompresion, tipos.Ninguna)
+	bloque := crearBloqueComprimido(t, mediciones, tipos.Integer, tipos.SinCompresionBytes, tipos.SinCompresionBloque)
 
-	resultado, err := DescomprimirBloqueSerie(bloque, tipos.Integer, tipos.SinCompresion, tipos.Ninguna)
+	resultado, err := DescomprimirBloqueSerie(bloque, tipos.Integer, tipos.SinCompresionBytes, tipos.SinCompresionBloque)
 	require.NoError(t, err)
 	require.Len(t, resultado, len(mediciones))
 
@@ -1464,9 +1517,9 @@ func TestDescomprimirBloqueSerie_Real_SinCompresion(t *testing.T) {
 		{Tiempo: 1000001000, Valor: float64(26.5)},
 	}
 
-	bloque := crearBloqueComprimido(t, mediciones, tipos.Real, tipos.SinCompresion, tipos.Ninguna)
+	bloque := crearBloqueComprimido(t, mediciones, tipos.Real, tipos.SinCompresionBytes, tipos.SinCompresionBloque)
 
-	resultado, err := DescomprimirBloqueSerie(bloque, tipos.Real, tipos.SinCompresion, tipos.Ninguna)
+	resultado, err := DescomprimirBloqueSerie(bloque, tipos.Real, tipos.SinCompresionBytes, tipos.SinCompresionBloque)
 	require.NoError(t, err)
 	require.Len(t, resultado, len(mediciones))
 
@@ -1502,9 +1555,9 @@ func TestDescomprimirBloqueSerie_Boolean_SinCompresion(t *testing.T) {
 		{Tiempo: 1000001000, Valor: false},
 	}
 
-	bloque := crearBloqueComprimido(t, mediciones, tipos.Boolean, tipos.SinCompresion, tipos.Ninguna)
+	bloque := crearBloqueComprimido(t, mediciones, tipos.Boolean, tipos.SinCompresionBytes, tipos.SinCompresionBloque)
 
-	resultado, err := DescomprimirBloqueSerie(bloque, tipos.Boolean, tipos.SinCompresion, tipos.Ninguna)
+	resultado, err := DescomprimirBloqueSerie(bloque, tipos.Boolean, tipos.SinCompresionBytes, tipos.SinCompresionBloque)
 	require.NoError(t, err)
 	require.Len(t, resultado, len(mediciones))
 
@@ -1559,9 +1612,9 @@ func TestDescomprimirBloqueSerie_Text_SinCompresion(t *testing.T) {
 		{Tiempo: 1000001000, Valor: "mundo"},
 	}
 
-	bloque := crearBloqueComprimido(t, mediciones, tipos.Text, tipos.SinCompresion, tipos.Ninguna)
+	bloque := crearBloqueComprimido(t, mediciones, tipos.Text, tipos.SinCompresionBytes, tipos.SinCompresionBloque)
 
-	resultado, err := DescomprimirBloqueSerie(bloque, tipos.Text, tipos.SinCompresion, tipos.Ninguna)
+	resultado, err := DescomprimirBloqueSerie(bloque, tipos.Text, tipos.SinCompresionBytes, tipos.SinCompresionBloque)
 	require.NoError(t, err)
 	require.Len(t, resultado, len(mediciones))
 

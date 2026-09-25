@@ -7,12 +7,11 @@ import (
 
 // Información de un nodo registrado
 type Nodo struct {
-	NodoID     string            `json:"nodo_id"`          // Identificador del nodo
-	Direccion  string            `json:"direccion"`        // Dirección pública del nodo
-	PuertoHTTP string            `json:"puerto_http"`      // Puerto HTTP del nodo
-	Series     map[string]Serie  `json:"series"`           // Lista de series gestionadas por el nodo
-	Tags       map[string]string `json:"tags,omitempty"`   // Metadatos libres del nodo (nombre, ubicación, etc.)
-	Reglas     []Regla           `json:"reglas,omitempty"` // Lista de reglas del motor de reglas
+	NodoID    string            `json:"nodo_id"`          // Identificador del nodo
+	Direccion string            `json:"direccion"`        // Dirección pública del nodo
+	Series    map[string]Serie  `json:"series"`           // Lista de series gestionadas por el nodo
+	Tags      map[string]string `json:"tags,omitempty"`   // Metadatos libres del nodo (nombre, ubicación, etc.)
+	Reglas    []Regla           `json:"reglas,omitempty"` // Lista de reglas del motor de reglas
 }
 
 // Regla representa una regla del motor de reglas (versión serializable)

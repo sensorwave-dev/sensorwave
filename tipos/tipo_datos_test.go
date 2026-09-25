@@ -85,11 +85,11 @@ func TestTipoDatos_AlgoritmosCompresion_Boolean(t *testing.T) {
 		t.Errorf("Boolean debería tener 2 algoritmos, tiene %d", len(algoritmos))
 	}
 
-	// Verificar que contiene SinCompresion y RLE
+	// Verificar que contiene SinCompresionBytes y RLE
 	tieneNinguno := false
 	tieneRLE := false
 	for _, alg := range algoritmos {
-		if alg == SinCompresion {
+		if alg == SinCompresionBytes {
 			tieneNinguno = true
 		}
 		if alg == RLE {
@@ -98,7 +98,7 @@ func TestTipoDatos_AlgoritmosCompresion_Boolean(t *testing.T) {
 	}
 
 	if !tieneNinguno {
-		t.Error("Boolean debería soportar SinCompresion")
+		t.Error("Boolean debería soportar SinCompresionBytes")
 	}
 	if !tieneRLE {
 		t.Error("Boolean debería soportar RLE")
@@ -117,10 +117,10 @@ func TestTipoDatos_AlgoritmosCompresion_Integer(t *testing.T) {
 
 	// Verificar algoritmos esperados
 	esperados := map[TipoCompresion]bool{
-		SinCompresion: false,
-		DeltaDelta:    false,
-		RLE:           false,
-		Bits:          false,
+		SinCompresionBytes: false,
+		DeltaDelta:         false,
+		RLE:                false,
+		Bits:               false,
 	}
 
 	for _, alg := range algoritmos {
@@ -148,10 +148,10 @@ func TestTipoDatos_AlgoritmosCompresion_Real(t *testing.T) {
 
 	// Verificar algoritmos esperados
 	esperados := map[TipoCompresion]bool{
-		SinCompresion: false,
-		DeltaDelta:    false,
-		Xor:           false,
-		RLE:           false,
+		SinCompresionBytes: false,
+		DeltaDelta:         false,
+		Xor:                false,
+		RLE:                false,
 	}
 
 	for _, alg := range algoritmos {
@@ -179,9 +179,9 @@ func TestTipoDatos_AlgoritmosCompresion_Text(t *testing.T) {
 
 	// Verificar algoritmos esperados
 	esperados := map[TipoCompresion]bool{
-		SinCompresion: false,
-		RLE:           false,
-		Diccionario:   false,
+		SinCompresionBytes: false,
+		RLE:                false,
+		Diccionario:        false,
 	}
 
 	for _, alg := range algoritmos {
@@ -204,24 +204,24 @@ func TestTipoDatos_AlgoritmosCompresion_Desconocido(t *testing.T) {
 	algoritmos := Desconocido.AlgoritmosCompresion()
 
 	if len(algoritmos) != 1 {
-		t.Errorf("Desconocido debería tener 1 algoritmo (SinCompresion), tiene %d", len(algoritmos))
+		t.Errorf("Desconocido debería tener 1 algoritmo (SinCompresionBytes), tiene %d", len(algoritmos))
 	}
 
-	if algoritmos[0] != SinCompresion {
-		t.Errorf("Desconocido debería tener SinCompresion, tiene %s", algoritmos[0])
+	if algoritmos[0] != SinCompresionBytes {
+		t.Errorf("Desconocido debería tener SinCompresionBytes, tiene %s", algoritmos[0])
 	}
 
-	t.Log("✓ Desconocido solo soporta SinCompresion")
+	t.Log("✓ Desconocido solo soporta SinCompresionBytes")
 }
 
 // ==================== Tests de TipoDatos.ValidarCompresion() ====================
 
 // TestTipoDatos_ValidarCompresion_BooleanValido verifica compresión válida para Boolean
 func TestTipoDatos_ValidarCompresion_BooleanValido(t *testing.T) {
-	// SinCompresion debería ser válido
-	err := Boolean.ValidarCompresion(SinCompresion)
+	// SinCompresionBytes debería ser válido
+	err := Boolean.ValidarCompresion(SinCompresionBytes)
 	if err != nil {
-		t.Errorf("SinCompresion debería ser válido para Boolean: %v", err)
+		t.Errorf("SinCompresionBytes debería ser válido para Boolean: %v", err)
 	}
 
 	// RLE debería ser válido
@@ -230,7 +230,7 @@ func TestTipoDatos_ValidarCompresion_BooleanValido(t *testing.T) {
 		t.Errorf("RLE debería ser válido para Boolean: %v", err)
 	}
 
-	t.Log("✓ Boolean acepta SinCompresion y RLE")
+	t.Log("✓ Boolean acepta SinCompresionBytes y RLE")
 }
 
 // TestTipoDatos_ValidarCompresion_BooleanInvalido verifica compresión inválida para Boolean
@@ -260,7 +260,7 @@ func TestTipoDatos_ValidarCompresion_BooleanInvalido(t *testing.T) {
 
 // TestTipoDatos_ValidarCompresion_IntegerValido verifica compresión válida para Integer
 func TestTipoDatos_ValidarCompresion_IntegerValido(t *testing.T) {
-	algoritmosValidos := []TipoCompresion{SinCompresion, DeltaDelta, RLE, Bits}
+	algoritmosValidos := []TipoCompresion{SinCompresionBytes, DeltaDelta, RLE, Bits}
 
 	for _, alg := range algoritmosValidos {
 		err := Integer.ValidarCompresion(alg)
@@ -269,7 +269,7 @@ func TestTipoDatos_ValidarCompresion_IntegerValido(t *testing.T) {
 		}
 	}
 
-	t.Log("✓ Integer acepta SinCompresion, DeltaDelta, RLE y Bits")
+	t.Log("✓ Integer acepta SinCompresionBytes, DeltaDelta, RLE y Bits")
 }
 
 // TestTipoDatos_ValidarCompresion_IntegerInvalido verifica compresión inválida para Integer
@@ -291,7 +291,7 @@ func TestTipoDatos_ValidarCompresion_IntegerInvalido(t *testing.T) {
 
 // TestTipoDatos_ValidarCompresion_RealValido verifica compresión válida para Real
 func TestTipoDatos_ValidarCompresion_RealValido(t *testing.T) {
-	algoritmosValidos := []TipoCompresion{SinCompresion, DeltaDelta, Xor, RLE}
+	algoritmosValidos := []TipoCompresion{SinCompresionBytes, DeltaDelta, Xor, RLE}
 
 	for _, alg := range algoritmosValidos {
 		err := Real.ValidarCompresion(alg)
@@ -300,7 +300,7 @@ func TestTipoDatos_ValidarCompresion_RealValido(t *testing.T) {
 		}
 	}
 
-	t.Log("✓ Real acepta SinCompresion, DeltaDelta, Xor y RLE")
+	t.Log("✓ Real acepta SinCompresionBytes, DeltaDelta, Xor y RLE")
 }
 
 // TestTipoDatos_ValidarCompresion_RealInvalido verifica compresión inválida para Real
@@ -322,7 +322,7 @@ func TestTipoDatos_ValidarCompresion_RealInvalido(t *testing.T) {
 
 // TestTipoDatos_ValidarCompresion_TextValido verifica compresión válida para Text
 func TestTipoDatos_ValidarCompresion_TextValido(t *testing.T) {
-	algoritmosValidos := []TipoCompresion{SinCompresion, RLE, Diccionario}
+	algoritmosValidos := []TipoCompresion{SinCompresionBytes, RLE, Diccionario}
 
 	for _, alg := range algoritmosValidos {
 		err := Text.ValidarCompresion(alg)
@@ -331,7 +331,7 @@ func TestTipoDatos_ValidarCompresion_TextValido(t *testing.T) {
 		}
 	}
 
-	t.Log("✓ Text acepta SinCompresion, RLE y Diccionario")
+	t.Log("✓ Text acepta SinCompresionBytes, RLE y Diccionario")
 }
 
 // TestTipoDatos_ValidarCompresion_TextInvalido verifica compresión inválida para Text
@@ -348,12 +348,12 @@ func TestTipoDatos_ValidarCompresion_TextInvalido(t *testing.T) {
 	t.Log("✓ Text rechaza DeltaDelta, Xor y Bits")
 }
 
-// TestTipoDatos_ValidarCompresion_DesconocidoSoloNinguno verifica que Desconocido solo acepta SinCompresion
+// TestTipoDatos_ValidarCompresion_DesconocidoSoloNinguno verifica que Desconocido solo acepta SinCompresionBytes
 func TestTipoDatos_ValidarCompresion_DesconocidoSoloNinguno(t *testing.T) {
-	// SinCompresion debería ser válido
-	err := Desconocido.ValidarCompresion(SinCompresion)
+	// SinCompresionBytes debería ser válido
+	err := Desconocido.ValidarCompresion(SinCompresionBytes)
 	if err != nil {
-		t.Errorf("SinCompresion debería ser válido para Desconocido: %v", err)
+		t.Errorf("SinCompresionBytes debería ser válido para Desconocido: %v", err)
 	}
 
 	// Cualquier otro algoritmo debería fallar
@@ -362,7 +362,7 @@ func TestTipoDatos_ValidarCompresion_DesconocidoSoloNinguno(t *testing.T) {
 		t.Error("RLE no debería ser válido para Desconocido")
 	}
 
-	t.Log("✓ Desconocido solo acepta SinCompresion")
+	t.Log("✓ Desconocido solo acepta SinCompresionBytes")
 }
 
 // TestTipoDatos_ValidarCompresion_MensajeError verifica el formato del mensaje de error

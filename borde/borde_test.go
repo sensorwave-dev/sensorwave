@@ -5,8 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net/http"
-	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
@@ -14,7 +12,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
-	"github.com/cockroachdb/pebble"
+	"github.com/sensorwave-dev/sensorwave/almacen"
+	pebblemotor "github.com/sensorwave-dev/sensorwave/almacen/pebble"
 	"github.com/sensorwave-dev/sensorwave/compresor"
 	"github.com/sensorwave-dev/sensorwave/tipos"
 	"github.com/stretchr/testify/assert"
@@ -24,51 +23,6 @@ import (
 // ============================================================================
 // TESTS DE UTILS.GO
 // ============================================================================
-
-// TestValidarPuertoHTTP_Default verifica que retorna puerto por defecto
-func TestValidarPuertoHTTP_Default(t *testing.T) {
-	puerto, err := validarPuertoHTTP("")
-	require.NoError(t, err)
-	assert.Equal(t, "8080", puerto)
-	t.Log("✓ validarPuertoHTTP retorna puerto por defecto 8080")
-}
-
-// TestValidarPuertoHTTP_Valido verifica puertos válidos
-func TestValidarPuertoHTTP_Valido(t *testing.T) {
-	casos := []struct {
-		puerto   string
-		esperado string
-	}{
-		{"8080", "8080"},
-		{"3000", "3000"},
-		{"65535", "65535"},
-		{"1", "1"},
-	}
-
-	for _, caso := range casos {
-		puerto, err := validarPuertoHTTP(caso.puerto)
-		require.NoError(t, err)
-		assert.Equal(t, caso.esperado, puerto)
-	}
-	t.Log("✓ validarPuertoHTTP acepta puertos válidos")
-}
-
-// TestValidarPuertoHTTP_Invalido verifica rechazo de puertos inválidos
-func TestValidarPuertoHTTP_Invalido(t *testing.T) {
-	casos := []string{
-		"abc",
-		"-1",
-		"0",
-		"65536",
-		"100000",
-	}
-
-	for _, caso := range casos {
-		_, err := validarPuertoHTTP(caso)
-		assert.Error(t, err, "Debería fallar para puerto: %s", caso)
-	}
-	t.Log("✓ validarPuertoHTTP rechaza puertos inválidos")
-}
 
 // TestEsPathValido_Validos verifica paths válidos
 func TestEsPathValido_Validos(t *testing.T) {
@@ -192,32 +146,41 @@ func TestMatchTags(t *testing.T) {
 // ============================================================================
 
 // TestCrear_SinS3SinPuerto_ModoLocal verifica modo puramente local
-func TestCrear_SinS3SinPuerto_ModoLocal(t *testing.T) {
+func TestCrear_SinS3_ModoLocal(t *testing.T) {
 	tempDir := t.TempDir()
 
 	gestor, err := Crear(Opciones{
-		NombreDB:   tempDir + "/test_local.db",
-		Direccion:  "localhost",
-		PuertoHTTP: "",  // Sin puerto
-		ConfigS3:   nil, // Sin S3
+		NombreDB:  tempDir + "/test_local.db",
+		Direccion: "localhost",
+		ConfigS3:  nil,
 	})
 
 	require.NoError(t, err)
 	defer gestor.Cerrar()
 
 	assert.NotEmpty(t, gestor.ObtenerNodoID())
-	assert.Empty(t, gestor.puertoHTTP)
-	t.Log("✓ Crear funciona en modo local sin servidor HTTP")
+	t.Log("✓ Crear funciona en modo local sin federación MQTT")
 }
 
-// TestCrear_ConS3SinPuerto_Error verifica que falla si hay S3 pero no puerto
-func TestCrear_ConS3SinPuerto_Error(t *testing.T) {
+func TestCrear_MotorDesconocido(t *testing.T) {
+	_, err := Crear(Opciones{
+		NombreDB:  t.TempDir() + "/test_motor.db",
+		Direccion: "localhost",
+		Motor:     "otro",
+	})
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "motor de almacenamiento desconocido")
+}
+
+// TestCrear_ConS3SinBrokerMQTT_Error verifica que falla si hay S3 pero no BrokerMQTT
+func TestCrear_ConS3SinBrokerMQTT_Error(t *testing.T) {
 	tempDir := t.TempDir()
 
 	_, err := Crear(Opciones{
 		NombreDB:   tempDir + "/test_s3.db",
 		Direccion:  "localhost",
-		PuertoHTTP: "", // Sin puerto
+		BrokerMQTT: "",
 		ConfigS3: &tipos.ConfiguracionS3{
 			Endpoint: "http://localhost:9000",
 			Bucket:   "test",
@@ -225,24 +188,24 @@ func TestCrear_ConS3SinPuerto_Error(t *testing.T) {
 	})
 
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "PuertoHTTP es requerido")
-	t.Log("✓ Crear retorna error cuando hay S3 pero no puerto HTTP")
+	assert.Contains(t, err.Error(), "BrokerMQTT es requerido")
+	t.Log("✓ Crear retorna error cuando hay S3 pero no BrokerMQTT")
 }
 
-// TestCrear_SinS3ConPuerto_Error verifica que falla si hay puerto pero no S3
-func TestCrear_SinS3ConPuerto_Error(t *testing.T) {
+// TestCrear_SinS3ConBrokerMQTT_Error verifica que falla si hay broker pero no S3
+func TestCrear_SinS3ConBrokerMQTT_Error(t *testing.T) {
 	tempDir := t.TempDir()
 
 	_, err := Crear(Opciones{
-		NombreDB:   tempDir + "/test_puerto.db",
+		NombreDB:   tempDir + "/test_broker.db",
 		Direccion:  "localhost",
-		PuertoHTTP: "8080", // Con puerto
-		ConfigS3:   nil,    // Sin S3
+		BrokerMQTT: "tcp://localhost:1883",
+		ConfigS3:   nil,
 	})
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no debe especificarse sin ConfigS3")
-	t.Log("✓ Crear retorna error cuando hay puerto HTTP pero no S3")
+	t.Log("✓ Crear retorna error cuando hay BrokerMQTT pero no S3")
 }
 
 // ============================================================================
@@ -844,9 +807,8 @@ func TestMotorReglas_Concurrencia(t *testing.T) {
 // ============================================================================
 
 // crearDBTemporal crea una base de datos Pebble temporal para testing
-func crearDBTemporal(t *testing.T) *pebble.DB {
-	dir := t.TempDir()
-	db, err := pebble.Open(dir, &pebble.Options{})
+func crearDBTemporal(t *testing.T) almacen.Motor {
+	db, err := pebblemotor.Abrir(t.TempDir())
 	require.NoError(t, err)
 	return db
 }
@@ -859,13 +821,12 @@ func crearDBTemporal(t *testing.T) *pebble.DB {
 // sin iniciar servidor HTTP ni conectarse a S3
 func crearGestorBordeParaTest(t *testing.T) *GestorBorde {
 	dir := t.TempDir()
-	db, err := pebble.Open(dir, &pebble.Options{})
+	db, err := pebblemotor.Abrir(dir)
 	require.NoError(t, err)
 
 	gestor := &GestorBorde{
 		nodoID:     "test-node-001",
 		direccion:  "127.0.0.1",
-		puertoHTTP: "8080",
 		db:         db,
 		cache:      &Cache{datos: make(map[string]tipos.Serie)},
 		finalizado: make(chan struct{}),
@@ -888,7 +849,7 @@ func crearGestorBordeParaTest(t *testing.T) *GestorBorde {
 		default:
 			close(gestor.finalizado)
 		}
-		db.Close()
+		db.Cerrar()
 	})
 
 	return gestor
@@ -990,7 +951,7 @@ func crearBloqueComprimidoTest(t *testing.T, serie tipos.Serie, mediciones []tip
 		case tipos.DeltaDelta:
 			comp := &compresor.CompresorDeltaDeltaGenerico[int64]{}
 			valoresComprimidos, err = comp.Comprimir(valoresInt)
-		case tipos.SinCompresion:
+		case tipos.SinCompresionBytes:
 			comp := &compresor.CompresorNingunoGenerico[int64]{}
 			valoresComprimidos, err = comp.Comprimir(valoresInt)
 		default:
@@ -1004,7 +965,7 @@ func crearBloqueComprimidoTest(t *testing.T, serie tipos.Serie, mediciones []tip
 		case tipos.Xor:
 			comp := &compresor.CompresorXor{}
 			valoresComprimidos, err = comp.Comprimir(valoresFloat)
-		case tipos.SinCompresion:
+		case tipos.SinCompresionBytes:
 			comp := &compresor.CompresorNingunoGenerico[float64]{}
 			valoresComprimidos, err = comp.Comprimir(valoresFloat)
 		default:
@@ -1050,8 +1011,8 @@ func TestObtenerSeries_Existe(t *testing.T) {
 		Path:             "sensor/temperatura",
 		TipoDatos:        tipos.Real,
 		TamañoBloque:     100,
-		CompresionBloque: tipos.Ninguna,
-		CompresionBytes:  tipos.SinCompresion,
+		CompresionBloque: tipos.SinCompresionBloque,
+		CompresionBytes:  tipos.SinCompresionBytes,
 		Tags:             map[string]string{"ubicacion": "sala1"},
 	}
 	gestor.cache.mu.Lock()
@@ -1177,8 +1138,8 @@ func TestCrearSerie_PathVacio(t *testing.T) {
 		Path:             "",
 		TipoDatos:        tipos.Real,
 		TamañoBloque:     100,
-		CompresionBloque: tipos.Ninguna,
-		CompresionBytes:  tipos.SinCompresion,
+		CompresionBloque: tipos.SinCompresionBloque,
+		CompresionBytes:  tipos.SinCompresionBytes,
 	})
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "vacío")
@@ -1200,8 +1161,8 @@ func TestCrearSerie_PathInvalido(t *testing.T) {
 			Path:             path,
 			TipoDatos:        tipos.Real,
 			TamañoBloque:     100,
-			CompresionBloque: tipos.Ninguna,
-			CompresionBytes:  tipos.SinCompresion,
+			CompresionBloque: tipos.SinCompresionBloque,
+			CompresionBytes:  tipos.SinCompresionBytes,
 		})
 		assert.Error(t, err, "Debería fallar para path: %s", path)
 	}
@@ -1216,8 +1177,8 @@ func TestCrearSerie_TipoDatosInvalido(t *testing.T) {
 		Path:             "sensor/temp",
 		TipoDatos:        tipos.Desconocido, // Tipo desconocido no es válido
 		TamañoBloque:     100,
-		CompresionBloque: tipos.Ninguna,
-		CompresionBytes:  tipos.SinCompresion,
+		CompresionBloque: tipos.SinCompresionBloque,
+		CompresionBytes:  tipos.SinCompresionBytes,
 	})
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "tipo de datos")
@@ -1233,8 +1194,8 @@ func TestCrearSerie_TamanoBloqueInvalido(t *testing.T) {
 		Path:             "sensor/temp",
 		TipoDatos:        tipos.Real,
 		TamañoBloque:     0,
-		CompresionBloque: tipos.Ninguna,
-		CompresionBytes:  tipos.SinCompresion,
+		CompresionBloque: tipos.SinCompresionBloque,
+		CompresionBytes:  tipos.SinCompresionBytes,
 	})
 	assert.Error(t, err)
 
@@ -1243,8 +1204,8 @@ func TestCrearSerie_TamanoBloqueInvalido(t *testing.T) {
 		Path:             "sensor/temp2",
 		TipoDatos:        tipos.Real,
 		TamañoBloque:     -1,
-		CompresionBloque: tipos.Ninguna,
-		CompresionBytes:  tipos.SinCompresion,
+		CompresionBloque: tipos.SinCompresionBloque,
+		CompresionBytes:  tipos.SinCompresionBytes,
 	})
 	assert.Error(t, err)
 
@@ -1260,7 +1221,7 @@ func TestCrearSerie_CompresionBloqueInvalida(t *testing.T) {
 		TipoDatos:        tipos.Real,
 		TamañoBloque:     100,
 		CompresionBloque: tipos.TipoCompresionBloque("InvalidCompression"),
-		CompresionBytes:  tipos.SinCompresion,
+		CompresionBytes:  tipos.SinCompresionBytes,
 	})
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "compresión")
@@ -1276,7 +1237,7 @@ func TestCrearSerie_CompresionBytesInvalida(t *testing.T) {
 		Path:             "sensor/activo",
 		TipoDatos:        tipos.Boolean,
 		TamañoBloque:     100,
-		CompresionBloque: tipos.Ninguna,
+		CompresionBloque: tipos.SinCompresionBloque,
 		CompresionBytes:  tipos.Xor,
 	})
 	assert.Error(t, err)
@@ -1291,8 +1252,8 @@ func TestCrearSerie_Exitoso(t *testing.T) {
 		Path:             "sensor/temperatura",
 		TipoDatos:        tipos.Real,
 		TamañoBloque:     100,
-		CompresionBloque: tipos.Ninguna,
-		CompresionBytes:  tipos.SinCompresion,
+		CompresionBloque: tipos.SinCompresionBloque,
+		CompresionBytes:  tipos.SinCompresionBytes,
 		Tags:             map[string]string{"ubicacion": "sala1"},
 	})
 	require.NoError(t, err)
@@ -1307,10 +1268,8 @@ func TestCrearSerie_Exitoso(t *testing.T) {
 	assert.Equal(t, 1, serie.SerieId)
 
 	// Verificar que está en DB
-	_, closer, err := gestor.db.Get([]byte("series/sensor/temperatura"))
+	_, err = gestor.db.Obtener([]byte("series/sensor/temperatura"))
 	require.NoError(t, err)
-	closer.Close()
-
 	t.Log("CrearSerie crea serie exitosamente con persistencia")
 }
 
@@ -1322,8 +1281,8 @@ func TestCrearSerie_YaExiste_NoError(t *testing.T) {
 		Path:             "sensor/temp",
 		TipoDatos:        tipos.Real,
 		TamañoBloque:     100,
-		CompresionBloque: tipos.Ninguna,
-		CompresionBytes:  tipos.SinCompresion,
+		CompresionBloque: tipos.SinCompresionBloque,
+		CompresionBytes:  tipos.SinCompresionBytes,
 	}
 
 	// Primera creación
@@ -1366,8 +1325,8 @@ func TestInsertar_TipoIncompatible(t *testing.T) {
 		Path:             "sensor/contador",
 		TipoDatos:        tipos.Integer,
 		TamañoBloque:     100,
-		CompresionBloque: tipos.Ninguna,
-		CompresionBytes:  tipos.SinCompresion,
+		CompresionBloque: tipos.SinCompresionBloque,
+		CompresionBytes:  tipos.SinCompresionBytes,
 	})
 	require.NoError(t, err)
 
@@ -1387,8 +1346,8 @@ func TestInsertar_Exitoso(t *testing.T) {
 		Path:             "sensor/temp",
 		TipoDatos:        tipos.Real,
 		TamañoBloque:     100,
-		CompresionBloque: tipos.Ninguna,
-		CompresionBytes:  tipos.SinCompresion,
+		CompresionBloque: tipos.SinCompresionBloque,
+		CompresionBytes:  tipos.SinCompresionBytes,
 	})
 	require.NoError(t, err)
 
@@ -1433,8 +1392,8 @@ func TestConsultarRango_SinDatos(t *testing.T) {
 		Path:             "sensor/temp",
 		TipoDatos:        tipos.Real,
 		TamañoBloque:     100,
-		CompresionBloque: tipos.Ninguna,
-		CompresionBytes:  tipos.SinCompresion,
+		CompresionBloque: tipos.SinCompresionBloque,
+		CompresionBytes:  tipos.SinCompresionBytes,
 	}
 	gestor.cache.mu.Lock()
 	gestor.cache.datos["sensor/temp"] = serie
@@ -1458,8 +1417,8 @@ func TestConsultarRango_ConDatosEnDB(t *testing.T) {
 		Path:             "sensor/temp",
 		TipoDatos:        tipos.Real,
 		TamañoBloque:     100,
-		CompresionBloque: tipos.Ninguna,
-		CompresionBytes:  tipos.SinCompresion,
+		CompresionBloque: tipos.SinCompresionBloque,
+		CompresionBytes:  tipos.SinCompresionBytes,
 	}
 	gestor.cache.mu.Lock()
 	gestor.cache.datos["sensor/temp"] = serie
@@ -1478,7 +1437,7 @@ func TestConsultarRango_ConDatosEnDB(t *testing.T) {
 
 	// Guardar en DB
 	clave := generarClaveDatos(serie.SerieId, ahora-3000, ahora-1000)
-	err := gestor.db.Set(clave, bloque, pebble.Sync)
+	err := gestor.db.Poner(clave, bloque)
 	require.NoError(t, err)
 
 	// Consultar
@@ -1510,8 +1469,8 @@ func TestConsultarRango_IngestaMasDeDiezMil(t *testing.T) {
 		Path:             "sensor/temp",
 		TipoDatos:        tipos.Real,
 		TamañoBloque:     100,
-		CompresionBloque: tipos.Ninguna,
-		CompresionBytes:  tipos.SinCompresion,
+		CompresionBloque: tipos.SinCompresionBloque,
+		CompresionBytes:  tipos.SinCompresionBytes,
 	}
 	gestor.cache.mu.Lock()
 	gestor.cache.datos["sensor/temp"] = serie
@@ -1560,8 +1519,8 @@ func TestConsultarUltimoPunto_DesdeBuffer(t *testing.T) {
 		Path:             "sensor/temp",
 		TipoDatos:        tipos.Real,
 		TamañoBloque:     100,
-		CompresionBloque: tipos.Ninguna,
-		CompresionBytes:  tipos.SinCompresion,
+		CompresionBloque: tipos.SinCompresionBloque,
+		CompresionBytes:  tipos.SinCompresionBytes,
 	}
 	gestor.cache.mu.Lock()
 	gestor.cache.datos["sensor/temp"] = serie
@@ -1603,8 +1562,8 @@ func TestConsultarUltimoPunto_DesdeDB(t *testing.T) {
 		Path:             "sensor/temp",
 		TipoDatos:        tipos.Real,
 		TamañoBloque:     100,
-		CompresionBloque: tipos.Ninguna,
-		CompresionBytes:  tipos.SinCompresion,
+		CompresionBloque: tipos.SinCompresionBloque,
+		CompresionBytes:  tipos.SinCompresionBytes,
 	}
 	gestor.cache.mu.Lock()
 	gestor.cache.datos["sensor/temp"] = serie
@@ -1621,7 +1580,7 @@ func TestConsultarUltimoPunto_DesdeDB(t *testing.T) {
 	// Guardar bloque
 	bloque := crearBloqueComprimidoTest(t, serie, mediciones)
 	clave := generarClaveDatos(serie.SerieId, ahora-2000, ahora)
-	err := gestor.db.Set(clave, bloque, pebble.Sync)
+	err := gestor.db.Poner(clave, bloque)
 	require.NoError(t, err)
 
 	// Consultar (sin buffer, nil, nil = sin límites de tiempo)
@@ -1636,157 +1595,7 @@ func TestConsultarUltimoPunto_DesdeDB(t *testing.T) {
 }
 
 // ============================================================================
-// TESTS DE HANDLERS HTTP (comunicacion_nube.go)
-// ============================================================================
-
-// TestHandleConsultaRango_MetodoInvalido verifica rechazo de método GET
-func TestHandleConsultaRango_MetodoInvalido(t *testing.T) {
-	gestor := crearGestorBordeParaTest(t)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/consulta/rango", nil)
-	w := httptest.NewRecorder()
-
-	gestor.handleConsultaRango(w, req)
-
-	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
-	t.Log("handleConsultaRango rechaza método GET")
-}
-
-// TestHandleConsultaRango_BodyInvalido verifica error con body inválido
-func TestHandleConsultaRango_BodyInvalido(t *testing.T) {
-	gestor := crearGestorBordeParaTest(t)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/consulta/rango", bytes.NewReader([]byte("datos inválidos")))
-	w := httptest.NewRecorder()
-
-	gestor.handleConsultaRango(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	t.Log("handleConsultaRango rechaza body inválido")
-}
-
-// TestHandleConsultaRango_Exitoso verifica consulta exitosa
-func TestHandleConsultaRango_Exitoso(t *testing.T) {
-	gestor := crearGestorBordeParaTest(t)
-
-	// Crear serie
-	serie := tipos.Serie{
-		SerieId:          1,
-		Path:             "sensor/temp",
-		TipoDatos:        tipos.Real,
-		TamañoBloque:     100,
-		CompresionBloque: tipos.Ninguna,
-		CompresionBytes:  tipos.SinCompresion,
-	}
-	gestor.cache.mu.Lock()
-	gestor.cache.datos["sensor/temp"] = serie
-	gestor.cache.mu.Unlock()
-
-	// Crear solicitud
-	ahora := time.Now().UnixNano()
-	solicitud := tipos.SolicitudConsultaRango{
-		Serie:        "sensor/temp",
-		TiempoInicio: ahora - 1000000,
-		TiempoFin:    ahora,
-	}
-	solicitudBytes, _ := tipos.SerializarGob(solicitud)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/consulta/rango", bytes.NewReader(solicitudBytes))
-	w := httptest.NewRecorder()
-
-	gestor.handleConsultaRango(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "application/octet-stream", w.Header().Get("Content-Type"))
-	t.Log("handleConsultaRango procesa solicitud exitosamente")
-}
-
-// TestHandleConsultaUltimo_Exitoso verifica consulta de último punto
-func TestHandleConsultaUltimo_Exitoso(t *testing.T) {
-	gestor := crearGestorBordeParaTest(t)
-
-	// Crear serie con buffer
-	serie := tipos.Serie{
-		SerieId:          1,
-		Path:             "sensor/temp",
-		TipoDatos:        tipos.Real,
-		TamañoBloque:     100,
-		CompresionBloque: tipos.Ninguna,
-		CompresionBytes:  tipos.SinCompresion,
-	}
-	gestor.cache.mu.Lock()
-	gestor.cache.datos["sensor/temp"] = serie
-	gestor.cache.mu.Unlock()
-
-	// Coordinador con datos
-	ahora := time.Now().UnixNano()
-	coordinador := &CoordinadorSerie{
-		serie:               serie,
-		finalizado:          make(chan struct{}),
-		notificarCompresion: make(chan struct{}, 1),
-	}
-	gestor.coordinadores.Store("sensor/temp", coordinador)
-
-	// Insertar datos directamente al WAL
-	gestor.escribirPuntoIngesta(serie.SerieId, tipos.Medicion{Tiempo: ahora, Valor: float64(25.0)})
-
-	// Crear solicitud
-	solicitud := tipos.SolicitudConsultaPunto{Serie: "sensor/temp"}
-	solicitudBytes, _ := tipos.SerializarGob(solicitud)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/consulta/ultimo", bytes.NewReader(solicitudBytes))
-	w := httptest.NewRecorder()
-
-	gestor.handleConsultaUltimo(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	// Deserializar respuesta
-	var respuesta tipos.RespuestaConsultaPunto
-	err := tipos.DeserializarGob(w.Body.Bytes(), &respuesta)
-	require.NoError(t, err)
-
-	// Verificar formato columnar
-	require.Len(t, respuesta.Resultado.Series, 1)
-	assert.Equal(t, "sensor/temp", respuesta.Resultado.Series[0])
-	assert.Equal(t, float64(25.0), respuesta.Resultado.Valores[0])
-	assert.Empty(t, respuesta.Error)
-	t.Log("handleConsultaUltimo retorna último punto correctamente")
-}
-
-// TestEnviarRespuestaGob_Exitoso verifica serialización de respuesta
-func TestEnviarRespuestaGob_Exitoso(t *testing.T) {
-	w := httptest.NewRecorder()
-
-	respuesta := tipos.RespuestaConsultaPunto{
-		Resultado: tipos.ResultadoConsultaPunto{
-			Series:  []string{"sensor/temp"},
-			Tiempos: []int64{1000},
-			Valores: []interface{}{float64(25.0)},
-		},
-	}
-
-	enviarRespuestaGob(w, respuesta)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "application/octet-stream", w.Header().Get("Content-Type"))
-	assert.NotEmpty(t, w.Body.Bytes())
-	t.Log("enviarRespuestaGob serializa y envía correctamente")
-}
-
-// TestEnviarRespuestaError verifica envío de error
-func TestEnviarRespuestaError(t *testing.T) {
-	w := httptest.NewRecorder()
-
-	enviarRespuestaError(w, "Error de prueba")
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "Error de prueba")
-	t.Log("enviarRespuestaError envía error correctamente")
-}
-
-// ============================================================================
-// TESTS DE S3 (migracion_datos.go y comunicacion_nube.go)
+// TESTS DE S3 (migracion_datos.go y comunicacion_s3.go)
 // ============================================================================
 
 // TestRegistrarEnS3_S3NoConfigurado verifica error cuando S3 no está configurado
@@ -1864,10 +1673,10 @@ func TestMigrarPorTiempoAlmacenamiento_S3NoConfigurado(t *testing.T) {
 	clienteS3 = nil
 	defer func() { clienteS3 = clienteOriginal }()
 
-	err := gestor.MigrarPorTiempoAlmacenamiento()
+	err := gestor.migrarPorTiempoAlmacenamiento()
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no está configurado")
-	t.Log("MigrarPorTiempoAlmacenamiento retorna error sin S3")
+	t.Log("migrarPorTiempoAlmacenamiento retorna error sin S3")
 }
 
 // TestMigrarPorTiempoAlmacenamiento_SinSeriesConTiempo verifica cuando no hay series con tiempo
@@ -1889,10 +1698,10 @@ func TestMigrarPorTiempoAlmacenamiento_SinSeriesConTiempo(t *testing.T) {
 	}
 	gestor.cache.mu.Unlock()
 
-	err := gestor.MigrarPorTiempoAlmacenamiento()
+	err := gestor.migrarPorTiempoAlmacenamiento()
 	assert.NoError(t, err)
 	assert.Equal(t, 0, mockS3.putObjectCalls) // No debe migrar nada
-	t.Log("MigrarPorTiempoAlmacenamiento no hace nada si no hay series con tiempo")
+	t.Log("migrarPorTiempoAlmacenamiento no hace nada si no hay series con tiempo")
 }
 
 // TestMigrarPorTiempoAlmacenamiento_MigraBloquesAntiguos verifica migración de bloques antiguos
@@ -1919,8 +1728,8 @@ func TestMigrarPorTiempoAlmacenamiento_MigraBloquesAntiguos(t *testing.T) {
 		Path:                 "sensor/temp",
 		TipoDatos:            tipos.Real,
 		TamañoBloque:         100,
-		CompresionBloque:     tipos.Ninguna,
-		CompresionBytes:      tipos.SinCompresion,
+		CompresionBloque:     tipos.SinCompresionBloque,
+		CompresionBytes:      tipos.SinCompresionBytes,
 		TiempoAlmacenamiento: int64(time.Hour),
 	}
 	gestor.cache.mu.Lock()
@@ -1934,12 +1743,12 @@ func TestMigrarPorTiempoAlmacenamiento_MigraBloquesAntiguos(t *testing.T) {
 	}
 	bloque := crearBloqueComprimidoTest(t, serie, mediciones)
 	clave := generarClaveDatos(serie.SerieId, tiempoAntiguo, tiempoAntiguo)
-	gestor.db.Set(clave, bloque, pebble.Sync)
+	gestor.db.Poner(clave, bloque)
 
-	err := gestor.MigrarPorTiempoAlmacenamiento()
+	err := gestor.migrarPorTiempoAlmacenamiento()
 	assert.NoError(t, err)
 	assert.Equal(t, 1, mockS3.putObjectCalls)
-	t.Log("MigrarPorTiempoAlmacenamiento migra bloques antiguos correctamente")
+	t.Log("migrarPorTiempoAlmacenamiento migra bloques antiguos correctamente")
 }
 
 // ============================================================================
@@ -1956,8 +1765,8 @@ func TestConsultarAgregacion_SerieExacta_Promedio(t *testing.T) {
 		Path:             "sensor/temp",
 		TipoDatos:        tipos.Real,
 		TamañoBloque:     100,
-		CompresionBloque: tipos.Ninguna,
-		CompresionBytes:  tipos.SinCompresion,
+		CompresionBloque: tipos.SinCompresionBloque,
+		CompresionBytes:  tipos.SinCompresionBytes,
 	}
 	gestor.cache.mu.Lock()
 	gestor.cache.datos["sensor/temp"] = serie
@@ -1974,7 +1783,7 @@ func TestConsultarAgregacion_SerieExacta_Promedio(t *testing.T) {
 	// Guardar bloque
 	bloque := crearBloqueComprimidoTest(t, serie, mediciones)
 	clave := generarClaveDatos(serie.SerieId, ahora-3000, ahora-1000)
-	err := gestor.db.Set(clave, bloque, pebble.Sync)
+	err := gestor.db.Poner(clave, bloque)
 	require.NoError(t, err)
 
 	// Consultar promedio
@@ -2002,8 +1811,8 @@ func TestConsultarAgregacion_SerieExacta_MinMax(t *testing.T) {
 		Path:             "sensor/temp",
 		TipoDatos:        tipos.Real,
 		TamañoBloque:     100,
-		CompresionBloque: tipos.Ninguna,
-		CompresionBytes:  tipos.SinCompresion,
+		CompresionBloque: tipos.SinCompresionBloque,
+		CompresionBytes:  tipos.SinCompresionBytes,
 	}
 	gestor.cache.mu.Lock()
 	gestor.cache.datos["sensor/temp"] = serie
@@ -2018,7 +1827,7 @@ func TestConsultarAgregacion_SerieExacta_MinMax(t *testing.T) {
 
 	bloque := crearBloqueComprimidoTest(t, serie, mediciones)
 	clave := generarClaveDatos(serie.SerieId, ahora-3000, ahora-1000)
-	gestor.db.Set(clave, bloque, pebble.Sync)
+	gestor.db.Poner(clave, bloque)
 
 	// MIN
 	minResult, err := gestor.ConsultarAgregacion(
@@ -2054,8 +1863,8 @@ func TestConsultarAgregacion_SerieExacta_SumaCount(t *testing.T) {
 		Path:             "sensor/temp",
 		TipoDatos:        tipos.Real,
 		TamañoBloque:     100,
-		CompresionBloque: tipos.Ninguna,
-		CompresionBytes:  tipos.SinCompresion,
+		CompresionBloque: tipos.SinCompresionBloque,
+		CompresionBytes:  tipos.SinCompresionBytes,
 	}
 	gestor.cache.mu.Lock()
 	gestor.cache.datos["sensor/temp"] = serie
@@ -2070,7 +1879,7 @@ func TestConsultarAgregacion_SerieExacta_SumaCount(t *testing.T) {
 
 	bloque := crearBloqueComprimidoTest(t, serie, mediciones)
 	clave := generarClaveDatos(serie.SerieId, ahora-3000, ahora-1000)
-	gestor.db.Set(clave, bloque, pebble.Sync)
+	gestor.db.Poner(clave, bloque)
 
 	// SUM = 60
 	sumaResult, err := gestor.ConsultarAgregacion(
@@ -2121,8 +1930,8 @@ func TestConsultarAgregacion_SinDatos(t *testing.T) {
 		Path:             "sensor/temp",
 		TipoDatos:        tipos.Real,
 		TamañoBloque:     100,
-		CompresionBloque: tipos.Ninguna,
-		CompresionBytes:  tipos.SinCompresion,
+		CompresionBloque: tipos.SinCompresionBloque,
+		CompresionBytes:  tipos.SinCompresionBytes,
 	}
 	gestor.cache.mu.Lock()
 	gestor.cache.datos["sensor/temp"] = serie
@@ -2145,8 +1954,8 @@ func TestConsultarAgregacion_Patron(t *testing.T) {
 
 	// Crear 2 series con patrón común (wildcard como segmento completo)
 	series := []tipos.Serie{
-		{SerieId: 1, Path: "sensor_01/temp", TipoDatos: tipos.Real, TamañoBloque: 100, CompresionBloque: tipos.Ninguna, CompresionBytes: tipos.SinCompresion},
-		{SerieId: 2, Path: "sensor_02/temp", TipoDatos: tipos.Real, TamañoBloque: 100, CompresionBloque: tipos.Ninguna, CompresionBytes: tipos.SinCompresion},
+		{SerieId: 1, Path: "sensor_01/temp", TipoDatos: tipos.Real, TamañoBloque: 100, CompresionBloque: tipos.SinCompresionBloque, CompresionBytes: tipos.SinCompresionBytes},
+		{SerieId: 2, Path: "sensor_02/temp", TipoDatos: tipos.Real, TamañoBloque: 100, CompresionBloque: tipos.SinCompresionBloque, CompresionBytes: tipos.SinCompresionBytes},
 	}
 
 	gestor.cache.mu.Lock()
@@ -2163,7 +1972,7 @@ func TestConsultarAgregacion_Patron(t *testing.T) {
 		{Tiempo: ahora - 1000, Valor: float64(20.0)},
 	}
 	bloque1 := crearBloqueComprimidoTest(t, series[0], mediciones1)
-	gestor.db.Set(generarClaveDatos(1, ahora-2000, ahora-1000), bloque1, pebble.Sync)
+	gestor.db.Poner(generarClaveDatos(1, ahora-2000, ahora-1000), bloque1)
 
 	// Serie 2: valores 30, 40 → promedio 35
 	mediciones2 := []tipos.Medicion{
@@ -2171,7 +1980,7 @@ func TestConsultarAgregacion_Patron(t *testing.T) {
 		{Tiempo: ahora - 1000, Valor: float64(40.0)},
 	}
 	bloque2 := crearBloqueComprimidoTest(t, series[1], mediciones2)
-	gestor.db.Set(generarClaveDatos(2, ahora-2000, ahora-1000), bloque2, pebble.Sync)
+	gestor.db.Poner(generarClaveDatos(2, ahora-2000, ahora-1000), bloque2)
 
 	// Consultar con patrón */temp (wildcard como segmento completo)
 	// Serie 1: promedio 15, Serie 2: promedio 35 (ahora columnar, cada serie tiene su valor)
@@ -2215,8 +2024,8 @@ func TestConsultarAgregacionTemporal_Buckets(t *testing.T) {
 		Path:             "sensor/temp",
 		TipoDatos:        tipos.Real,
 		TamañoBloque:     100,
-		CompresionBloque: tipos.Ninguna,
-		CompresionBytes:  tipos.SinCompresion,
+		CompresionBloque: tipos.SinCompresionBloque,
+		CompresionBytes:  tipos.SinCompresionBytes,
 	}
 	gestor.cache.mu.Lock()
 	gestor.cache.datos["sensor/temp"] = serie
@@ -2238,7 +2047,7 @@ func TestConsultarAgregacionTemporal_Buckets(t *testing.T) {
 
 	bloque := crearBloqueComprimidoTest(t, serie, mediciones)
 	clave := generarClaveDatos(serie.SerieId, hace2Horas.UnixNano(), hace1Hora.UnixNano()+2000)
-	gestor.db.Set(clave, bloque, pebble.Sync)
+	gestor.db.Poner(clave, bloque)
 
 	// Consultar con buckets de 1 hora
 	resultado, err := gestor.ConsultarAgregacionTemporal(
@@ -2271,8 +2080,8 @@ func TestConsultarAgregacionTemporal_IntervaloGrande(t *testing.T) {
 		Path:             "sensor/temp",
 		TipoDatos:        tipos.Real,
 		TamañoBloque:     100,
-		CompresionBloque: tipos.Ninguna,
-		CompresionBytes:  tipos.SinCompresion,
+		CompresionBloque: tipos.SinCompresionBloque,
+		CompresionBytes:  tipos.SinCompresionBytes,
 	}
 	gestor.cache.mu.Lock()
 	gestor.cache.datos["sensor/temp"] = serie
@@ -2287,7 +2096,7 @@ func TestConsultarAgregacionTemporal_IntervaloGrande(t *testing.T) {
 
 	bloque := crearBloqueComprimidoTest(t, serie, mediciones)
 	clave := generarClaveDatos(serie.SerieId, ahora-3000, ahora-1000)
-	gestor.db.Set(clave, bloque, pebble.Sync)
+	gestor.db.Poner(clave, bloque)
 
 	// Intervalo de 1 día para rango de pocos segundos → 1 bucket
 	resultado, err := gestor.ConsultarAgregacionTemporal(
@@ -2330,8 +2139,8 @@ func TestConsultarAgregacionTemporal_SinDatos(t *testing.T) {
 		Path:             "sensor/temp",
 		TipoDatos:        tipos.Real,
 		TamañoBloque:     100,
-		CompresionBloque: tipos.Ninguna,
-		CompresionBytes:  tipos.SinCompresion,
+		CompresionBloque: tipos.SinCompresionBloque,
+		CompresionBytes:  tipos.SinCompresionBytes,
 	}
 	gestor.cache.mu.Lock()
 	gestor.cache.datos["sensor/temp"] = serie
@@ -2397,8 +2206,8 @@ func TestConsultarAgregacion_MultiplesAgregaciones_MinMax(t *testing.T) {
 		Path:             "sensor/temperatura",
 		TipoDatos:        tipos.Real,
 		TamañoBloque:     100,
-		CompresionBloque: tipos.Ninguna,
-		CompresionBytes:  tipos.SinCompresion,
+		CompresionBloque: tipos.SinCompresionBloque,
+		CompresionBytes:  tipos.SinCompresionBytes,
 	}
 	gestor.cache.mu.Lock()
 	gestor.cache.datos[serie.Path] = serie
@@ -2417,7 +2226,7 @@ func TestConsultarAgregacion_MultiplesAgregaciones_MinMax(t *testing.T) {
 	// Guardar bloque
 	bloque := crearBloqueComprimidoTest(t, serie, mediciones)
 	clave := generarClaveDatos(serie.SerieId, ahora-5000, ahora-1000)
-	err := gestor.db.Set(clave, bloque, pebble.Sync)
+	err := gestor.db.Poner(clave, bloque)
 	require.NoError(t, err)
 
 	// Consultar min y max en una sola llamada
@@ -2451,8 +2260,8 @@ func TestConsultarAgregacion_MultiplesAgregaciones_Todas(t *testing.T) {
 		Path:             "sensor/temp",
 		TipoDatos:        tipos.Real,
 		TamañoBloque:     100,
-		CompresionBloque: tipos.Ninguna,
-		CompresionBytes:  tipos.SinCompresion,
+		CompresionBloque: tipos.SinCompresionBloque,
+		CompresionBytes:  tipos.SinCompresionBytes,
 	}
 	gestor.cache.mu.Lock()
 	gestor.cache.datos[serie.Path] = serie
@@ -2470,7 +2279,7 @@ func TestConsultarAgregacion_MultiplesAgregaciones_Todas(t *testing.T) {
 
 	bloque := crearBloqueComprimidoTest(t, serie, mediciones)
 	clave := generarClaveDatos(serie.SerieId, ahora-5000, ahora-1000)
-	err := gestor.db.Set(clave, bloque, pebble.Sync)
+	err := gestor.db.Poner(clave, bloque)
 	require.NoError(t, err)
 
 	agregaciones := []tipos.TipoAgregacion{
@@ -2504,8 +2313,8 @@ func TestConsultarAgregacion_MultiplesAgregaciones_Wildcard(t *testing.T) {
 	gestor := crearGestorBordeParaTest(t)
 
 	// Crear dos series
-	serie1 := tipos.Serie{SerieId: 1, Path: "dispositivo1/temp", TipoDatos: tipos.Real, TamañoBloque: 100, CompresionBloque: tipos.Ninguna, CompresionBytes: tipos.SinCompresion}
-	serie2 := tipos.Serie{SerieId: 2, Path: "dispositivo2/temp", TipoDatos: tipos.Real, TamañoBloque: 100, CompresionBloque: tipos.Ninguna, CompresionBytes: tipos.SinCompresion}
+	serie1 := tipos.Serie{SerieId: 1, Path: "dispositivo1/temp", TipoDatos: tipos.Real, TamañoBloque: 100, CompresionBloque: tipos.SinCompresionBloque, CompresionBytes: tipos.SinCompresionBytes}
+	serie2 := tipos.Serie{SerieId: 2, Path: "dispositivo2/temp", TipoDatos: tipos.Real, TamañoBloque: 100, CompresionBloque: tipos.SinCompresionBloque, CompresionBytes: tipos.SinCompresionBytes}
 
 	gestor.cache.mu.Lock()
 	gestor.cache.datos[serie1.Path] = serie1
@@ -2521,7 +2330,7 @@ func TestConsultarAgregacion_MultiplesAgregaciones_Wildcard(t *testing.T) {
 	}
 	bloque1 := crearBloqueComprimidoTest(t, serie1, mediciones1)
 	clave1 := generarClaveDatos(serie1.SerieId, ahora-2000, ahora-1000)
-	gestor.db.Set(clave1, bloque1, pebble.Sync)
+	gestor.db.Poner(clave1, bloque1)
 
 	// Serie 2: valores 100, 200 (min=100, max=200)
 	mediciones2 := []tipos.Medicion{
@@ -2530,7 +2339,7 @@ func TestConsultarAgregacion_MultiplesAgregaciones_Wildcard(t *testing.T) {
 	}
 	bloque2 := crearBloqueComprimidoTest(t, serie2, mediciones2)
 	clave2 := generarClaveDatos(serie2.SerieId, ahora-2000, ahora-1000)
-	gestor.db.Set(clave2, bloque2, pebble.Sync)
+	gestor.db.Poner(clave2, bloque2)
 
 	resultado, err := gestor.ConsultarAgregacion(
 		"dispositivo*/temp",
@@ -2606,8 +2415,8 @@ func TestEliminarSerie_EliminaCache(t *testing.T) {
 		Path:             "sensor/temp",
 		TipoDatos:        tipos.Real,
 		TamañoBloque:     100,
-		CompresionBloque: tipos.Ninguna,
-		CompresionBytes:  tipos.SinCompresion,
+		CompresionBloque: tipos.SinCompresionBloque,
+		CompresionBytes:  tipos.SinCompresionBytes,
 	})
 	require.NoError(t, err)
 
@@ -2639,23 +2448,21 @@ func TestEliminarSerie_EliminaMetadatosDB(t *testing.T) {
 		Path:             "sensor/temp",
 		TipoDatos:        tipos.Real,
 		TamañoBloque:     100,
-		CompresionBloque: tipos.Ninguna,
-		CompresionBytes:  tipos.SinCompresion,
+		CompresionBloque: tipos.SinCompresionBloque,
+		CompresionBytes:  tipos.SinCompresionBytes,
 	})
 	require.NoError(t, err)
 
 	// Verificar que está en DB
-	_, closer, err := gestor.db.Get([]byte("series/sensor/temp"))
+	_, err = gestor.db.Obtener([]byte("series/sensor/temp"))
 	require.NoError(t, err)
-	closer.Close()
-
 	// Eliminar serie
 	err = gestor.EliminarSerie("sensor/temp")
 	require.NoError(t, err)
 
 	// Verificar que ya no está en DB
-	_, _, err = gestor.db.Get([]byte("series/sensor/temp"))
-	assert.Equal(t, pebble.ErrNotFound, err, "Metadatos deben ser eliminados de DB")
+	_, err = gestor.db.Obtener([]byte("series/sensor/temp"))
+	assert.ErrorIs(t, err, almacen.ErrNoEncontrado, "Metadatos deben ser eliminados de DB")
 
 	t.Log("EliminarSerie elimina metadatos de PebbleDB correctamente")
 }
@@ -2669,8 +2476,8 @@ func TestEliminarSerie_EliminaDatosDB(t *testing.T) {
 		Path:             "sensor/temp",
 		TipoDatos:        tipos.Real,
 		TamañoBloque:     100,
-		CompresionBloque: tipos.Ninguna,
-		CompresionBytes:  tipos.SinCompresion,
+		CompresionBloque: tipos.SinCompresionBloque,
+		CompresionBytes:  tipos.SinCompresionBytes,
 	}
 	err := gestor.CrearSerie(serie)
 	require.NoError(t, err)
@@ -2689,21 +2496,19 @@ func TestEliminarSerie_EliminaDatosDB(t *testing.T) {
 	}
 	bloque := crearBloqueComprimidoTest(t, serieGuardada, mediciones)
 	clave := generarClaveDatos(serieId, ahora-2000, ahora-1000)
-	err = gestor.db.Set(clave, bloque, pebble.Sync)
+	err = gestor.db.Poner(clave, bloque)
 	require.NoError(t, err)
 
 	// Verificar que el bloque existe
-	_, closer, err := gestor.db.Get(clave)
+	_, err = gestor.db.Obtener(clave)
 	require.NoError(t, err)
-	closer.Close()
-
 	// Eliminar serie
 	err = gestor.EliminarSerie("sensor/temp")
 	require.NoError(t, err)
 
 	// Verificar que el bloque fue eliminado
-	_, _, err = gestor.db.Get(clave)
-	assert.Equal(t, pebble.ErrNotFound, err, "Bloques de datos deben ser eliminados")
+	_, err = gestor.db.Obtener(clave)
+	assert.ErrorIs(t, err, almacen.ErrNoEncontrado, "Bloques de datos deben ser eliminados")
 
 	t.Log("EliminarSerie elimina bloques de datos de PebbleDB correctamente")
 }
@@ -2717,8 +2522,8 @@ func TestEliminarSerie_EliminaBuffer(t *testing.T) {
 		Path:             "sensor/temp",
 		TipoDatos:        tipos.Real,
 		TamañoBloque:     100,
-		CompresionBloque: tipos.Ninguna,
-		CompresionBytes:  tipos.SinCompresion,
+		CompresionBloque: tipos.SinCompresionBloque,
+		CompresionBytes:  tipos.SinCompresionBytes,
 	})
 	require.NoError(t, err)
 
@@ -2746,8 +2551,8 @@ func TestEliminarSerie_NoAfectaOtrasSeries(t *testing.T) {
 		Path:             "sensor/temp1",
 		TipoDatos:        tipos.Real,
 		TamañoBloque:     100,
-		CompresionBloque: tipos.Ninguna,
-		CompresionBytes:  tipos.SinCompresion,
+		CompresionBloque: tipos.SinCompresionBloque,
+		CompresionBytes:  tipos.SinCompresionBytes,
 	})
 	require.NoError(t, err)
 
@@ -2755,8 +2560,8 @@ func TestEliminarSerie_NoAfectaOtrasSeries(t *testing.T) {
 		Path:             "sensor/temp2",
 		TipoDatos:        tipos.Real,
 		TamañoBloque:     100,
-		CompresionBloque: tipos.Ninguna,
-		CompresionBytes:  tipos.SinCompresion,
+		CompresionBloque: tipos.SinCompresionBloque,
+		CompresionBytes:  tipos.SinCompresionBytes,
 	})
 	require.NoError(t, err)
 
@@ -2771,10 +2576,8 @@ func TestEliminarSerie_NoAfectaOtrasSeries(t *testing.T) {
 	assert.True(t, existe, "Segunda serie debe seguir existiendo")
 
 	// Verificar en DB
-	_, closer, err := gestor.db.Get([]byte("series/sensor/temp2"))
+	_, err = gestor.db.Obtener([]byte("series/sensor/temp2"))
 	require.NoError(t, err)
-	closer.Close()
-
 	t.Log("EliminarSerie no afecta otras series")
 }
 
@@ -2787,8 +2590,8 @@ func TestEliminarSerie_EliminaMultiplesBloques(t *testing.T) {
 		Path:             "sensor/temp",
 		TipoDatos:        tipos.Real,
 		TamañoBloque:     100,
-		CompresionBloque: tipos.Ninguna,
-		CompresionBytes:  tipos.SinCompresion,
+		CompresionBloque: tipos.SinCompresionBloque,
+		CompresionBytes:  tipos.SinCompresionBytes,
 	}
 	err := gestor.CrearSerie(serie)
 	require.NoError(t, err)
@@ -2812,15 +2615,14 @@ func TestEliminarSerie_EliminaMultiplesBloques(t *testing.T) {
 		bloque := crearBloqueComprimidoTest(t, serieGuardada, mediciones)
 		clave := generarClaveDatos(serieId, tiempoBase, tiempoBase+1000)
 		claves = append(claves, clave)
-		err := gestor.db.Set(clave, bloque, pebble.Sync)
+		err := gestor.db.Poner(clave, bloque)
 		require.NoError(t, err)
 	}
 
 	// Verificar que todos los bloques existen
 	for _, clave := range claves {
-		_, closer, err := gestor.db.Get(clave)
+		_, err := gestor.db.Obtener(clave)
 		require.NoError(t, err)
-		closer.Close()
 	}
 
 	// Eliminar serie
@@ -2829,8 +2631,8 @@ func TestEliminarSerie_EliminaMultiplesBloques(t *testing.T) {
 
 	// Verificar que todos los bloques fueron eliminados
 	for _, clave := range claves {
-		_, _, err := gestor.db.Get(clave)
-		assert.Equal(t, pebble.ErrNotFound, err, "Todos los bloques deben ser eliminados")
+		_, err := gestor.db.Obtener(clave)
+		assert.ErrorIs(t, err, almacen.ErrNoEncontrado, "Todos los bloques deben ser eliminados")
 	}
 
 	t.Log("EliminarSerie elimina múltiples bloques correctamente")
@@ -2859,8 +2661,8 @@ func TestEliminarSerie_ConS3(t *testing.T) {
 		Path:             "sensor/temp",
 		TipoDatos:        tipos.Real,
 		TamañoBloque:     100,
-		CompresionBloque: tipos.Ninguna,
-		CompresionBytes:  tipos.SinCompresion,
+		CompresionBloque: tipos.SinCompresionBloque,
+		CompresionBytes:  tipos.SinCompresionBytes,
 	})
 	require.NoError(t, err)
 
@@ -2889,8 +2691,8 @@ func TestEliminarSerie_InsercionDespuesDeEliminar(t *testing.T) {
 		Path:             "sensor/temp",
 		TipoDatos:        tipos.Real,
 		TamañoBloque:     100,
-		CompresionBloque: tipos.Ninguna,
-		CompresionBytes:  tipos.SinCompresion,
+		CompresionBloque: tipos.SinCompresionBloque,
+		CompresionBytes:  tipos.SinCompresionBytes,
 	})
 	require.NoError(t, err)
 
@@ -2915,8 +2717,8 @@ func TestEliminarSerie_ConsultaDespuesDeEliminar(t *testing.T) {
 		Path:             "sensor/temp",
 		TipoDatos:        tipos.Real,
 		TamañoBloque:     100,
-		CompresionBloque: tipos.Ninguna,
-		CompresionBytes:  tipos.SinCompresion,
+		CompresionBloque: tipos.SinCompresionBloque,
+		CompresionBytes:  tipos.SinCompresionBytes,
 	})
 	require.NoError(t, err)
 
@@ -2941,8 +2743,8 @@ func TestEliminarSerie_PuedeRecrear(t *testing.T) {
 		Path:             "sensor/temp",
 		TipoDatos:        tipos.Real,
 		TamañoBloque:     100,
-		CompresionBloque: tipos.Ninguna,
-		CompresionBytes:  tipos.SinCompresion,
+		CompresionBloque: tipos.SinCompresionBloque,
+		CompresionBytes:  tipos.SinCompresionBytes,
 	})
 	require.NoError(t, err)
 
@@ -2985,10 +2787,8 @@ func TestGuardarEliminacionPendiente(t *testing.T) {
 
 	// Verificar que se guardó en DB
 	clave := generarClaveEliminacionPendiente(123)
-	_, closer, err := gestor.db.Get(clave)
+	_, err = gestor.db.Obtener(clave)
 	require.NoError(t, err)
-	closer.Close()
-
 	t.Log("guardarEliminacionPendiente guarda correctamente en PebbleDB")
 }
 
@@ -3026,8 +2826,8 @@ func TestEliminarPendienteCompletado(t *testing.T) {
 
 	// Verificar que ya no existe
 	clave := generarClaveEliminacionPendiente(123)
-	_, _, err = gestor.db.Get(clave)
-	assert.Equal(t, pebble.ErrNotFound, err)
+	_, err = gestor.db.Obtener(clave)
+	assert.ErrorIs(t, err, almacen.ErrNoEncontrado)
 
 	t.Log("eliminarPendienteCompletado elimina pendiente correctamente")
 }
@@ -3079,8 +2879,8 @@ func TestEliminarSerie_GuardaPendienteConS3(t *testing.T) {
 		Path:             "sensor/temp",
 		TipoDatos:        tipos.Real,
 		TamañoBloque:     100,
-		CompresionBloque: tipos.Ninguna,
-		CompresionBytes:  tipos.SinCompresion,
+		CompresionBloque: tipos.SinCompresionBloque,
+		CompresionBytes:  tipos.SinCompresionBytes,
 	})
 	require.NoError(t, err)
 
@@ -3122,8 +2922,8 @@ func TestEliminarSerie_SinS3NoPendiente(t *testing.T) {
 		Path:             "sensor/temp",
 		TipoDatos:        tipos.Real,
 		TamañoBloque:     100,
-		CompresionBloque: tipos.Ninguna,
-		CompresionBytes:  tipos.SinCompresion,
+		CompresionBloque: tipos.SinCompresionBloque,
+		CompresionBytes:  tipos.SinCompresionBytes,
 	})
 	require.NoError(t, err)
 
@@ -3204,7 +3004,7 @@ func TestProcesarEliminacionesPendientes_SinS3(t *testing.T) {
 	// Guardar pendiente manualmente
 	pendiente := EliminacionPendiente{SerieId: 1, Path: "test", MarcaTiempo: time.Now().UnixNano(), Intentos: 0}
 	datos, _ := tipos.SerializarGob(pendiente)
-	gestor.db.Set(generarClaveEliminacionPendiente(1), datos, pebble.Sync)
+	gestor.db.Poner(generarClaveEliminacionPendiente(1), datos)
 
 	// Procesar (no debería hacer nada)
 	err := gestor.procesarEliminacionesPendientes()
@@ -3231,7 +3031,6 @@ func TestProcesarEliminacionesPendientes_Exitoso(t *testing.T) {
 
 	mockS3 := &mockClienteS3{
 		listObjectsOutput:  &s3.ListObjectsV2Output{}, // Sin objetos (ya migrados)
-		putObjectOutput:    &s3.PutObjectOutput{},     // Para RegistrarEnS3
 		deleteObjectOutput: &s3.DeleteObjectOutput{},
 	}
 	clienteS3 = mockS3
@@ -3248,9 +3047,7 @@ func TestProcesarEliminacionesPendientes_Exitoso(t *testing.T) {
 	// Verificar que el pendiente fue eliminado
 	pendientes, _ := gestor.cargarEliminacionesPendientes()
 	assert.Empty(t, pendientes)
-
-	// Verificar que se actualizó el registro en S3
-	assert.GreaterOrEqual(t, mockS3.putObjectCalls, 1)
+	assert.Equal(t, 0, mockS3.putObjectCalls)
 
 	t.Log("ProcesarEliminacionesPendientes procesa y elimina pendientes exitosamente")
 }

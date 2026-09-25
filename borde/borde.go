@@ -2,6 +2,7 @@ package borde
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -9,19 +10,18 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cockroachdb/pebble"
-
+	"github.com/sensorwave-dev/sensorwave/almacen"
+	pebblemotor "github.com/sensorwave-dev/sensorwave/almacen/pebble"
 	"github.com/sensorwave-dev/sensorwave/compresor"
 	"github.com/sensorwave-dev/sensorwave/tipos"
 )
 
 type GestorBorde struct {
 	nodoID        string            // ID único del nodo borde
-	direccion     string            // dirección pública para uso de API REST
-	puertoHTTP    string            // Puerto HTTP para la API REST (legacy, opcional)
+	direccion     string            // dirección pública del nodo (registro / ops)
 	brokerMQTT    string            // Broker MQTT para federación con la nube
 	tags          map[string]string // Metadatos libres del nodo (nombre, ubicación, etc.)
-	db            *pebble.DB        // Base de datos Pebble local
+	db            almacen.Motor     // Almacenamiento local del nodo
 	cache         *Cache            // Cache en memoria de configuraciones de series
 	coordinadores sync.Map          // Map de coordinadores de series (gestión de compresión)
 	mu            sync.RWMutex      // Mutex para proteger el contador
@@ -29,7 +29,26 @@ type GestorBorde struct {
 	motorReglas   *MotorReglas      // Motor de reglas integrado
 	finalizado    chan struct{}     // Canal para señalizar cierre del gestor
 	federacion    *federacionMQTT   // Worker de federación MQTT (nil si no está activo)
+	intervaloS3   time.Duration     // Ciclo de registro, borrados pendientes y migración
+	cierre        sync.Once         // La segunda llamada a Cerrar no cierra canales
+	muIngesta     sync.Mutex        // Protege cerrado frente a Insertar en curso
+	cerrado       bool              // Insertar rechaza datos nuevos
+	enVuelo       sync.WaitGroup    // Insertar que ya pasaron el cierre
+	fondo         sync.WaitGroup    // Coordinadores de compactación y ciclo de S3
 }
+
+type errorValidacion struct {
+	mensaje string
+}
+
+func (e errorValidacion) Error() string {
+	return e.mensaje
+}
+
+var (
+	errSerieNoEncontrada = errors.New("serie no encontrada")
+	errTipoIncompatible  = errors.New("tipo de dato incompatible")
+)
 
 type Cache struct {
 	datos map[string]tipos.Serie // Mapa para almacenar las configuraciones de series
@@ -74,35 +93,39 @@ func (me *GestorBorde) escribirPuntoIngesta(serieId int, medicion tipos.Medicion
 	if err != nil {
 		return fmt.Errorf("error al serializar medición: %v", err)
 	}
-	return me.db.Set([]byte(clave), datos, pebble.Sync)
+	return me.db.Poner([]byte(clave), datos)
 }
 
 // leerPuntosIngesta lee los N puntos más antiguos del espacio de nombres de ingesta de una serie
-func (me *GestorBorde) leerPuntosIngesta(serieId int, n int) ([]tipos.Medicion, error) {
+func (me *GestorBorde) leerPuntosIngesta(serieId int, n int) ([]tipos.Medicion, int, error) {
 	prefijo := fmt.Sprintf("ingesta/%010d/", serieId)
-	iter, err := me.db.NewIter(&pebble.IterOptions{
-		LowerBound: []byte(prefijo),
-		UpperBound: []byte(fmt.Sprintf("ingesta/%010d0", serieId)),
-	})
+	iter, err := me.db.Recorrer([]byte(prefijo), []byte(fmt.Sprintf("ingesta/%010d0", serieId)))
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer iter.Close()
 
 	var mediciones []tipos.Medicion
+	descartados := 0
 	for iter.First(); iter.Valid() && len(mediciones) < n; iter.Next() {
 		var medicion tipos.Medicion
 		if err := tipos.DeserializarGob(iter.Value(), &medicion); err != nil {
-			continue // Skip mediciones con error
+			clave := append([]byte(nil), iter.Key()...)
+			log.Printf("Ingesta ilegible %s: %v", clave, err)
+			if errBorrar := me.db.Borrar(clave); errBorrar != nil {
+				log.Printf("Error borrando ingesta ilegible %s: %v", clave, errBorrar)
+			}
+			descartados++
+			continue
 		}
 		mediciones = append(mediciones, medicion)
 	}
 
 	if err := iter.Error(); err != nil {
-		return nil, err
+		return nil, descartados, err
 	}
 
-	return mediciones, nil
+	return mediciones, descartados, nil
 }
 
 // leerPuntosIngestaEnRango lee todos los puntos de ingesta de una serie en un rango temporal inclusivo.
@@ -114,10 +137,7 @@ func (me *GestorBorde) leerPuntosIngestaEnRango(serieId int, tiempoInicio, tiemp
 	lowerBound := []byte(fmt.Sprintf("ingesta/%010d/%020d", serieId, tiempoInicio))
 	upperBound := []byte(fmt.Sprintf("ingesta/%010d/%020d~", serieId, tiempoFin))
 
-	iter, err := me.db.NewIter(&pebble.IterOptions{
-		LowerBound: lowerBound,
-		UpperBound: upperBound,
-	})
+	iter, err := me.db.Recorrer(lowerBound, upperBound)
 	if err != nil {
 		return nil, err
 	}
@@ -142,10 +162,7 @@ func (me *GestorBorde) leerPuntosIngestaEnRango(serieId int, tiempoInicio, tiemp
 // leerUltimoPuntoIngesta retorna la medicion mas reciente en ingesta para una serie.
 func (me *GestorBorde) leerUltimoPuntoIngesta(serieId int) (tipos.Medicion, bool, error) {
 	prefijo := fmt.Sprintf("ingesta/%010d/", serieId)
-	iter, err := me.db.NewIter(&pebble.IterOptions{
-		LowerBound: []byte(prefijo),
-		UpperBound: []byte(fmt.Sprintf("ingesta/%010d0", serieId)),
-	})
+	iter, err := me.db.Recorrer([]byte(prefijo), []byte(fmt.Sprintf("ingesta/%010d0", serieId)))
 	if err != nil {
 		return tipos.Medicion{}, false, err
 	}
@@ -166,28 +183,19 @@ func (me *GestorBorde) leerUltimoPuntoIngesta(serieId int) (tipos.Medicion, bool
 	return medicion, true, nil
 }
 
-// eliminarPuntosIngesta elimina un conjunto de puntos del espacio de nombres de ingesta usando un batch
+// eliminarPuntosIngesta elimina un conjunto de puntos del espacio de nombres de ingesta usando un lote atómico.
 func (me *GestorBorde) eliminarPuntosIngesta(serieId int, timestamps []int64) error {
-	batch := me.db.NewBatch()
-	defer batch.Close()
-
-	for _, timestamp := range timestamps {
-		clave := []byte(fmt.Sprintf("ingesta/%010d/%020d", serieId, timestamp))
-		if err := batch.Delete(clave, nil); err != nil {
-			return err
-		}
+	claves := make([][]byte, len(timestamps))
+	for i, timestamp := range timestamps {
+		claves[i] = []byte(fmt.Sprintf("ingesta/%010d/%020d", serieId, timestamp))
 	}
-
-	return me.db.Apply(batch, pebble.Sync)
+	return me.db.BorrarVarias(claves)
 }
 
 // contarPuntosIngesta cuenta los puntos en el espacio de nombres de ingesta de una serie
 func (me *GestorBorde) contarPuntosIngesta(serieId int) int {
 	prefijo := fmt.Sprintf("ingesta/%010d/", serieId)
-	iter, err := me.db.NewIter(&pebble.IterOptions{
-		LowerBound: []byte(prefijo),
-		UpperBound: []byte(fmt.Sprintf("ingesta/%010d0", serieId)),
-	})
+	iter, err := me.db.Recorrer([]byte(prefijo), []byte(fmt.Sprintf("ingesta/%010d0", serieId)))
 	if err != nil {
 		return 0
 	}
@@ -261,7 +269,7 @@ func (me *GestorBorde) comprimirPuntos(mediciones []tipos.Medicion, serie tipos.
 		case tipos.Bits:
 			comp := &compresor.CompresorBitsGenerico[int64]{}
 			valoresComprimidos, err = comp.Comprimir(valoresInt)
-		case tipos.SinCompresion:
+		case tipos.SinCompresionBytes:
 			comp := &compresor.CompresorNingunoGenerico[int64]{}
 			valoresComprimidos, err = comp.Comprimir(valoresInt)
 		default:
@@ -284,7 +292,7 @@ func (me *GestorBorde) comprimirPuntos(mediciones []tipos.Medicion, serie tipos.
 		case tipos.RLE:
 			comp := &compresor.CompresorRLEGenerico[float64]{}
 			valoresComprimidos, err = comp.Comprimir(valoresFloat)
-		case tipos.SinCompresion:
+		case tipos.SinCompresionBytes:
 			comp := &compresor.CompresorNingunoGenerico[float64]{}
 			valoresComprimidos, err = comp.Comprimir(valoresFloat)
 		default:
@@ -301,7 +309,7 @@ func (me *GestorBorde) comprimirPuntos(mediciones []tipos.Medicion, serie tipos.
 		case tipos.RLE:
 			comp := &compresor.CompresorRLEGenerico[bool]{}
 			valoresComprimidos, err = comp.Comprimir(valoresBool)
-		case tipos.SinCompresion:
+		case tipos.SinCompresionBytes:
 			comp := &compresor.CompresorNingunoGenerico[bool]{}
 			valoresComprimidos, err = comp.Comprimir(valoresBool)
 		default:
@@ -321,7 +329,7 @@ func (me *GestorBorde) comprimirPuntos(mediciones []tipos.Medicion, serie tipos.
 		case tipos.RLE:
 			comp := &compresor.CompresorRLEGenerico[string]{}
 			valoresComprimidos, err = comp.Comprimir(valoresStr)
-		case tipos.SinCompresion:
+		case tipos.SinCompresionBytes:
 			comp := &compresor.CompresorNingunoGenerico[string]{}
 			valoresComprimidos, err = comp.Comprimir(valoresStr)
 		default:
@@ -341,7 +349,10 @@ func (me *GestorBorde) comprimirPuntos(mediciones []tipos.Medicion, serie tipos.
 
 	// NIVEL 2: Compresión de bloque
 	compresorBloque := compresor.ObtenerCompresorBloque(serie.CompresionBloque)
-	bloqueFinal, _ := compresorBloque.Comprimir(bloqueNivel1)
+	bloqueFinal, err := compresorBloque.Comprimir(bloqueNivel1)
+	if err != nil {
+		return nil, err
+	}
 
 	return bloqueFinal, nil
 }
@@ -349,12 +360,28 @@ func (me *GestorBorde) comprimirPuntos(mediciones []tipos.Medicion, serie tipos.
 // Opciones configura la creación de un GestorBorde.
 // ConfigS3 es opcional (nil = modo desconectado sin sincronización con nube).
 type Opciones struct {
-	NombreDB     string                 // Nombre de la base de datos Pebble (requerido)
-	Direccion    string                 // Dirección pública para API REST (se debe pasar, SensorWave es agnóstico en cuanto a que se usa)
-	PuertoHTTP   string                 // Puerto HTTP para API REST (opcional, legacy)
-	BrokerMQTT   string                 // Broker MQTT para federación con la nube (requerido solo si ConfigS3 != nil)
-	ConfigS3     *tipos.ConfiguracionS3 // nil = modo local sin nube (debe ser explícito si se usa)
-	Tags         map[string]string      // Metadatos libres del nodo (nombre, ubicación, etc.)
+	NombreDB    string                 // Directorio del almacenamiento local (requerido)
+	Motor       string                 // Motor de almacenamiento. Vacío o "pebble" abre Pebble.
+	Direccion   string                 // Dirección pública del nodo (registro / ops)
+	BrokerMQTT  string                 // Broker MQTT para federación con la nube (requerido solo si ConfigS3 != nil)
+	ConfigS3    *tipos.ConfiguracionS3 // nil = modo local sin nube (debe ser explícito si se usa)
+	Tags        map[string]string      // Metadatos libres del nodo (nombre, ubicación, etc.)
+	IntervaloS3 time.Duration          // Ciclo de registro, borrados pendientes y migración. Cero usa 5 minutos.
+}
+
+// abrirMotor abre el almacenamiento indicado en Opciones.
+// Motor vacío equivale a Pebble.
+func abrirMotor(opts Opciones) (almacen.Motor, error) {
+	nombre := opts.Motor
+	if nombre == "" {
+		nombre = "pebble"
+	}
+	switch nombre {
+	case "pebble":
+		return pebblemotor.Abrir(opts.NombreDB)
+	default:
+		return nil, fmt.Errorf("motor de almacenamiento desconocido: %s", nombre)
+	}
 }
 
 // Crear inicializa el GestorBorde con las opciones especificadas.
@@ -373,31 +400,20 @@ func Crear(opts Opciones) (*GestorBorde, error) {
 	}
 
 	// Validar conexión federada según configuración de S3
-	var puertoHTTP string
-	var err error
 	if opts.ConfigS3 != nil {
 		// Con S3: se requiere BrokerMQTT para federación con la nube
 		if opts.BrokerMQTT == "" {
 			return &GestorBorde{}, fmt.Errorf("BrokerMQTT es requerido cuando ConfigS3 está configurado")
-		}
-		if opts.PuertoHTTP != "" {
-			puertoHTTP, err = validarPuertoHTTP(opts.PuertoHTTP)
-			if err != nil {
-				return &GestorBorde{}, err
-			}
 		}
 	} else {
 		// Sin S3: no se requiere federación
 		if opts.BrokerMQTT != "" {
 			return &GestorBorde{}, fmt.Errorf("BrokerMQTT no debe especificarse sin ConfigS3")
 		}
-		if opts.PuertoHTTP != "" {
-			return &GestorBorde{}, fmt.Errorf("PuertoHTTP no debe especificarse sin ConfigS3 (no tiene sentido exponer HTTP sin registro en nube)")
-		}
 	}
 
-	// Abrir o crear la base de datos Pebble local
-	db, err := pebble.Open(opts.NombreDB, &pebble.Options{})
+	// Abrir el motor de almacenamiento. Vacío equivale a Pebble.
+	db, err := abrirMotor(opts)
 	if err != nil {
 		return &GestorBorde{}, err
 	}
@@ -406,7 +422,6 @@ func Crear(opts Opciones) (*GestorBorde, error) {
 	gestor := &GestorBorde{
 		db:         db,
 		direccion:  opts.Direccion,
-		puertoHTTP: puertoHTTP,
 		brokerMQTT: opts.BrokerMQTT,
 		tags:       opts.Tags,
 		cache:      &Cache{datos: make(map[string]tipos.Serie)},
@@ -415,22 +430,21 @@ func Crear(opts Opciones) (*GestorBorde, error) {
 	}
 
 	// Cargar o generar nodoID
-	nodoIDBytes, closer, err := db.Get([]byte("metadatos/nodo_id"))
+	nodoIDBytes, err := db.Obtener([]byte("metadatos/nodo_id"))
 	// Si no existe, generar uno nuevo
-	if err == pebble.ErrNotFound {
+	if errors.Is(err, almacen.ErrNoEncontrado) {
 		gestor.nodoID = generarNodoID()
-		err = db.Set([]byte("metadatos/nodo_id"), []byte(gestor.nodoID), pebble.Sync)
+		err = db.Poner([]byte("metadatos/nodo_id"), []byte(gestor.nodoID))
 		if err != nil {
-			return &GestorBorde{}, fmt.Errorf("error al guardar nodo_id: %v", err)
+			return gestor.abortarCreacion(fmt.Errorf("error al guardar nodo_id: %v", err))
 		}
 		log.Printf("Nuevo nodoID generado: %s", gestor.nodoID)
 	} else if err != nil {
 		// Error al leer nodoID existente
-		return &GestorBorde{}, fmt.Errorf("error al leer nodo_id: %v", err)
+		return gestor.abortarCreacion(fmt.Errorf("error al leer nodo_id: %v", err))
 	} else {
 		// Cargar nodoID existente
 		gestor.nodoID = string(nodoIDBytes)
-		closer.Close()
 		log.Printf("NodoID cargado desde DB: %s", gestor.nodoID)
 	}
 
@@ -440,53 +454,51 @@ func Crear(opts Opciones) (*GestorBorde, error) {
 		// Guardar los nuevos tags
 		tagsBytes, err := tipos.SerializarGob(opts.Tags)
 		if err != nil {
-			return &GestorBorde{}, fmt.Errorf("error al serializar tags: %v", err)
+			return gestor.abortarCreacion(fmt.Errorf("error al serializar tags: %v", err))
 		}
-		err = db.Set([]byte("metadatos/tags"), tagsBytes, pebble.Sync)
+		err = db.Poner([]byte("metadatos/tags"), tagsBytes)
 		if err != nil {
-			return &GestorBorde{}, fmt.Errorf("error al guardar tags: %v", err)
+			return gestor.abortarCreacion(fmt.Errorf("error al guardar tags: %v", err))
 		}
 		gestor.tags = opts.Tags
 		log.Printf("Tags actualizados: %v", opts.Tags)
 	} else {
 		// Cargar tags existentes desde PebbleDB
-		tagsBytes, closer, err := db.Get([]byte("metadatos/tags"))
+		tagsBytes, err := db.Obtener([]byte("metadatos/tags"))
 		if err == nil {
 			var tagsGuardados map[string]string
 			if err := tipos.DeserializarGob(tagsBytes, &tagsGuardados); err == nil {
 				gestor.tags = tagsGuardados
 				log.Printf("Tags cargados desde DB: %v", tagsGuardados)
 			}
-			closer.Close()
-		} else if err != pebble.ErrNotFound {
-			return &GestorBorde{}, fmt.Errorf("error al leer tags: %v", err)
+		} else if !errors.Is(err, almacen.ErrNoEncontrado) {
+			return gestor.abortarCreacion(fmt.Errorf("error al leer tags: %v", err))
 		}
 		// Si no hay tags guardados, gestor.tags queda nil (ya asignado arriba)
 	}
 
 	// Cargar contador de series desde PebbleDB
-	contadorBytes, closer, err := db.Get([]byte("metadatos/contador"))
-	if err != nil && err != pebble.ErrNotFound {
-		return &GestorBorde{}, fmt.Errorf("error al leer contador: %v", err)
+	contadorBytes, err := db.Obtener([]byte("metadatos/contador"))
+	if err != nil && !errors.Is(err, almacen.ErrNoEncontrado) {
+		return gestor.abortarCreacion(fmt.Errorf("error al leer contador: %v", err))
 	}
 	if err == nil {
 		// Cargar contador existente
 		if len(contadorBytes) >= 4 {
 			gestor.contador = int(binary.LittleEndian.Uint32(contadorBytes))
 		}
-		closer.Close()
 	}
 
 	// Cargar series existentes desde PebbleDB
 	err = gestor.cargarSeriesExistentes()
 	if err != nil {
-		return &GestorBorde{}, fmt.Errorf("error al cargar series: %v", err)
+		return gestor.abortarCreacion(fmt.Errorf("error al cargar series: %v", err))
 	}
 
 	// Reconstruir contadores de ingesta desde Pebble
 	err = gestor.reconstruirContadoresIngesta()
 	if err != nil {
-		return &GestorBorde{}, fmt.Errorf("error al reconstruir contadores de ingesta: %v", err)
+		return gestor.abortarCreacion(fmt.Errorf("error al reconstruir contadores de ingesta: %v", err))
 	}
 
 	// Configurar S3 si se proporciona configuración
@@ -494,7 +506,7 @@ func Crear(opts Opciones) (*GestorBorde, error) {
 		// Aplicar defaults y validar
 		opts.ConfigS3.AplicarDefaults()
 		if err := opts.ConfigS3.Validar(); err != nil {
-			return &GestorBorde{}, fmt.Errorf("configuración S3 inválida: %w", err)
+			return gestor.abortarCreacion(fmt.Errorf("configuración S3 inválida: %w", err))
 		}
 
 		err = gestor.configurarS3(*opts.ConfigS3)
@@ -511,40 +523,62 @@ func Crear(opts Opciones) (*GestorBorde, error) {
 	// Cargar reglas existentes
 	err = gestor.motorReglas.cargarReglasExistentes()
 	if err != nil {
-		return &GestorBorde{}, fmt.Errorf("error al cargar reglas: %v", err)
+		return gestor.abortarCreacion(fmt.Errorf("error al cargar reglas: %v", err))
 	}
 
-	// Si S3 está configurado y se pudo conectar, registrar el nodo (incluye reglas)
+	// Si quedó un cliente S3, el ciclo registra el nodo, reintenta borrados y migra bloques.
 	if clienteS3 != nil {
-		if err := gestor.registrarEnS3(); err != nil {
-			log.Printf("Advertencia: error registrando nodo en S3: %v", err)
+		gestor.intervaloS3 = opts.IntervaloS3
+		if gestor.intervaloS3 <= 0 {
+			gestor.intervaloS3 = 5 * time.Minute
 		}
-		// Iniciar limpieza automática de S3 (eliminaciones pendientes)
-		gestor.iniciarLimpiezaS3Automatica()
+		gestor.iniciarCicloS3()
 	}
 
 	// Iniciar federación MQTT si hay broker configurado (modo conectado con S3)
 	if opts.BrokerMQTT != "" {
 		fed, err := gestor.iniciarFederacionMQTT(opts.BrokerMQTT)
 		if err != nil {
-			db.Close()
-			return nil, fmt.Errorf("error iniciando federación MQTT: %w", err)
+			return gestor.abortarCreacion(fmt.Errorf("error iniciando federación MQTT: %w", err))
 		}
 		gestor.federacion = fed
 		log.Printf("Federación MQTT iniciada: %s", opts.BrokerMQTT)
 	}
 
-	// Iniciar servidor HTTP legacy solo si hay puerto configurado
-	if puertoHTTP != "" {
-		listoHTTP, err := gestor.iniciarServidorHTTP()
-		if err != nil {
-    		db.Close()
-    		return nil, fmt.Errorf("error iniciando servidor HTTP: %w", err)
-		}
-		<-listoHTTP
-	}
-
 	return gestor, nil
+}
+
+// abortarCreacion cierra coordinadores y la base cuando Crear falla después de abrirla.
+func (me *GestorBorde) abortarCreacion(err error) (*GestorBorde, error) {
+	me.muIngesta.Lock()
+	me.cerrado = true
+	me.muIngesta.Unlock()
+	close(me.finalizado)
+	me.fondo.Wait()
+	if me.federacion != nil {
+		me.federacion.cerrar()
+	}
+	me.db.Cerrar()
+	return &GestorBorde{}, err
+}
+
+// ActivarFederacionMQTT inicia el plano de control MQTT si aún no está activo.
+// Pensado para pruebas y escenarios donde el nodo ya opera en modo local.
+func (me *GestorBorde) ActivarFederacionMQTT(broker string) error {
+	if broker == "" {
+		return fmt.Errorf("broker MQTT vacío")
+	}
+	if me.federacion != nil {
+		return nil
+	}
+	fed, err := me.iniciarFederacionMQTT(broker)
+	if err != nil {
+		return err
+	}
+	me.federacion = fed
+	me.brokerMQTT = broker
+	log.Printf("Federación MQTT iniciada: %s", broker)
+	return nil
 }
 
 // ObtenerNodeID retorna el ID del nodo borde
@@ -562,8 +596,8 @@ func (me *GestorBorde) ObtenerTags() map[string]string {
 func (me *GestorBorde) ActualizarTags(tags map[string]string) error {
 	if tags == nil {
 		// Eliminar tags de PebbleDB
-		err := me.db.Delete([]byte("metadatos/tags"), pebble.Sync)
-		if err != nil && err != pebble.ErrNotFound {
+		err := me.db.Borrar([]byte("metadatos/tags"))
+		if err != nil && !errors.Is(err, almacen.ErrNoEncontrado) {
 			return fmt.Errorf("error al eliminar tags: %v", err)
 		}
 		me.tags = nil
@@ -574,7 +608,7 @@ func (me *GestorBorde) ActualizarTags(tags map[string]string) error {
 		if err != nil {
 			return fmt.Errorf("error al serializar tags: %v", err)
 		}
-		err = me.db.Set([]byte("metadatos/tags"), tagsBytes, pebble.Sync)
+		err = me.db.Poner([]byte("metadatos/tags"), tagsBytes)
 		if err != nil {
 			return fmt.Errorf("error al guardar tags: %v", err)
 		}
@@ -582,22 +616,12 @@ func (me *GestorBorde) ActualizarTags(tags map[string]string) error {
 		log.Printf("Tags actualizados: %v", tags)
 	}
 
-	// Sincronizar registro en S3 en modo best-effort
-	if clienteS3 != nil {
-		if err := me.registrarEnS3(); err != nil {
-			log.Printf("Advertencia: error actualizando tags en registro S3: %v", err)
-		}
-	}
-
 	return nil
 }
 
 // cargarSeriesExistentes carga todas las series desde PebbleDB al cache
 func (me *GestorBorde) cargarSeriesExistentes() error {
-	iter, err := me.db.NewIter(&pebble.IterOptions{
-		LowerBound: []byte("series/"),
-		UpperBound: []byte("series0"), // Rango que incluye todas las claves "series/*"
-	})
+	iter, err := me.db.Recorrer([]byte("series/"), []byte("series0"))
 	if err != nil {
 		return err
 	}
@@ -639,43 +663,49 @@ func (me *GestorBorde) cargarSeriesExistentes() error {
 		}
 
 		me.coordinadores.Store(seriesPath, coordinador)
-		go me.coordinarCompresion(coordinador)
+		me.lanzarCoordinador(coordinador)
 	}
 
 	return iter.Error()
 }
 
-// Cerrar cierra la conexión a PebbleDB y todos los goroutines asociados
+// Cerrar deja de aceptar inserts, compacta los bloques completos y cierra la base.
+// Una segunda llamada no vuelve a cerrar canales.
 func (me *GestorBorde) Cerrar() {
-	// Señalar a todos los goroutines que deben terminar
-	close(me.finalizado)
+	me.cierre.Do(func() {
+		me.muIngesta.Lock()
+		me.cerrado = true
+		me.muIngesta.Unlock()
+		me.enVuelo.Wait()
 
-	// Cerrar federación MQTT si está activa
-	if me.federacion != nil {
-		me.federacion.cerrar()
-	}
+		close(me.finalizado)
 
-	// Cerrar todos los coordinadores individuales
-	me.coordinadores.Range(func(clave, valor interface{}) bool {
-		cs := valor.(*CoordinadorSerie)
-		close(cs.finalizado)
-		return true
+		if me.federacion != nil {
+			me.federacion.cerrar()
+		}
+
+		me.fondo.Wait()
+
+		me.coordinadores.Range(func(_, valor any) bool {
+			cs := valor.(*CoordinadorSerie)
+			close(cs.finalizado)
+			return true
+		})
+
+		me.db.Cerrar()
 	})
-
-	// Cerrar PebbleDB
-	me.db.Close()
 }
 
 // CrearSerie crea una nueva serie si no existe. Si ya existe, no hace nada.
 func (me *GestorBorde) CrearSerie(config tipos.Serie) error {
 	// Validar campos obligatorios
 	if config.Path == "" {
-		return fmt.Errorf("el path de la serie no puede estar vacío")
+		return errorValidacion{"el path de la serie no puede estar vacío"}
 	}
 
 	// Validar que el path sea correcto
 	if !esPathValido(config.Path) {
-		return fmt.Errorf("el path de la serie tiene un formato inválido: %s", config.Path)
+		return errorValidacion{fmt.Sprintf("el path de la serie tiene un formato inválido: %s", config.Path)}
 	}
 
 	// Validar TipoDatos
@@ -688,31 +718,31 @@ func (me *GestorBorde) CrearSerie(config tipos.Serie) error {
 		}
 	}
 	if !tipoDatosValido {
-		return fmt.Errorf("tipo de datos inválido: %s, debe ser Boolean, Integer, Real o Text", config.TipoDatos)
+		return errorValidacion{fmt.Sprintf("tipo de datos inválido: %s, debe ser Boolean, Integer, Real o Text", config.TipoDatos)}
 	}
 
 	// Validar TamañoBloque
 	// se encuentra en el rango de (0, 10000]
 	if config.TamañoBloque <= 0 || config.TamañoBloque > 10000 {
-		return fmt.Errorf("el tamaño del bloque debe ubicarse en el rango de(0, 10000], recibido: %d", config.TamañoBloque)
+		return errorValidacion{fmt.Sprintf("el tamaño del bloque debe ubicarse en el rango de(0, 10000], recibido: %d", config.TamañoBloque)}
 	}
 
 	// Validar CompresionBloque
 	compresionBloqueValida := false
 	for _, compresion := range []tipos.TipoCompresionBloque{
-		tipos.Ninguna, tipos.LZ4, tipos.ZSTD, tipos.Snappy, tipos.Gzip} {
+		tipos.SinCompresionBloque, tipos.LZ4, tipos.ZSTD, tipos.Snappy, tipos.Gzip} {
 		if config.CompresionBloque == compresion {
 			compresionBloqueValida = true
 			break
 		}
 	}
 	if !compresionBloqueValida {
-		return fmt.Errorf("tipo de compresión de bloque inválido: %s", config.CompresionBloque)
+		return errorValidacion{fmt.Sprintf("tipo de compresión de bloque inválido: %s", config.CompresionBloque)}
 	}
 
 	// Validar CompresionBytes - usar validación automática del sistema de tipos
 	if err := config.TipoDatos.ValidarCompresion(config.CompresionBytes); err != nil {
-		return fmt.Errorf("error en compresión de bytes: %v", err)
+		return errorValidacion{fmt.Sprintf("error en compresión de bytes: %v", err)}
 	}
 
 	// Generar clave única basada en Path
@@ -723,36 +753,32 @@ func (me *GestorBorde) CrearSerie(config tipos.Serie) error {
 		config.Tags = make(map[string]string)
 	}
 
-	// Verificar si la serie ya existe en cache
+	// El lock cubre la existencia, el alta y la publicación del coordinador.
+	me.mu.Lock()
+	defer me.mu.Unlock()
+
 	me.cache.mu.RLock()
-	if _, existe := me.cache.datos[serieClave]; existe {
-		me.cache.mu.RUnlock()
+	_, existe := me.cache.datos[serieClave]
+	me.cache.mu.RUnlock()
+	if existe {
 		return nil
 	}
-	me.cache.mu.RUnlock()
 
-	// Verificar si existe en PebbleDB
 	clave := []byte("series/" + serieClave)
-	_, closer, err := me.db.Get(clave)
+	_, err := me.db.Obtener(clave)
 	if err == nil {
-		closer.Close()
-		return nil // Serie ya existe
+		return nil
 	}
-	if err != pebble.ErrNotFound {
+	if !errors.Is(err, almacen.ErrNoEncontrado) {
 		return fmt.Errorf("error al verificar serie: %v", err)
 	}
 
-	// Generar nuevo ID para la serie
-	me.mu.Lock()
 	me.contador++
 	config.SerieId = me.contador
 
-	// Actualizar contador en PebbleDB
 	contadorBytes := make([]byte, 4)
 	binary.LittleEndian.PutUint32(contadorBytes, uint32(me.contador))
-	err = me.db.Set([]byte("metadatos/contador"), contadorBytes, pebble.Sync)
-	me.mu.Unlock()
-
+	err = me.db.Poner([]byte("metadatos/contador"), contadorBytes)
 	if err != nil {
 		return fmt.Errorf("error al actualizar contador: %v", err)
 	}
@@ -763,7 +789,7 @@ func (me *GestorBorde) CrearSerie(config tipos.Serie) error {
 		return fmt.Errorf("error al serializar serie: %v", err)
 	}
 
-	err = me.db.Set(clave, serieBytes, pebble.Sync)
+	err = me.db.Poner(clave, serieBytes)
 	if err != nil {
 		return fmt.Errorf("error al guardar serie: %v", err)
 	}
@@ -781,90 +807,110 @@ func (me *GestorBorde) CrearSerie(config tipos.Serie) error {
 	}
 
 	me.coordinadores.Store(serieClave, coordinador)
-	go me.coordinarCompresion(coordinador)
-
-	// Registrar nodo actualizado en S3 si está configurado
-	if clienteS3 != nil {
-		err = me.registrarEnS3()
-		if err != nil {
-			log.Printf("Error registrando serie nueva en S3: %v", err)
-		}
-	}
+	me.lanzarCoordinador(coordinador)
 
 	return nil
 }
 
-// coordinarCompresion coordina la compresión asíncrona de datos desde el WAL
+func (me *GestorBorde) lanzarCoordinador(cs *CoordinadorSerie) {
+	me.fondo.Add(1)
+	go me.coordinarCompresion(cs)
+}
+
+// coordinarCompresion compacta bloques completos. Si después de uno el contador
+// sigue en TamañoBloque o más, deja otro aviso. Al cerrar el gestor drena esos
+// bloques y, si uno falla, no lo reintenta.
 func (me *GestorBorde) coordinarCompresion(cs *CoordinadorSerie) {
+	defer me.fondo.Done()
 	for {
 		select {
 		case <-cs.finalizado:
 			return
 		case <-me.finalizado:
+			for cs.contador.Load() >= int64(cs.serie.TamañoBloque) {
+				if !me.compactarUnBloque(cs) {
+					return
+				}
+			}
 			return
 		case <-cs.notificarCompresion:
-			cs.mu.Lock()
-
-			// Leer puntos del WAL
-			puntos, err := me.leerPuntosIngesta(cs.serie.SerieId, cs.serie.TamañoBloque)
-			if err != nil || len(puntos) == 0 {
-				cs.mu.Unlock()
+			if !me.compactarUnBloque(cs) {
 				continue
 			}
-
-			// Comprimir puntos
-			bloqueComprimido, err := me.comprimirPuntos(puntos, cs.serie)
-			if err != nil {
-				fmt.Printf("Error al comprimir puntos para serie %s: %v\n", cs.serie.Path, err)
-				cs.mu.Unlock()
-				continue
+			if cs.contador.Load() >= int64(cs.serie.TamañoBloque) {
+				select {
+				case cs.notificarCompresion <- struct{}{}:
+				default:
+				}
 			}
-
-			// Escribir bloque comprimido
-			tiempoInicio := puntos[0].Tiempo
-			tiempoFinal := puntos[len(puntos)-1].Tiempo
-			clave := generarClaveDatos(cs.serie.SerieId, tiempoInicio, tiempoFinal)
-			err = me.db.Set(clave, bloqueComprimido, pebble.Sync)
-			if err != nil {
-				fmt.Printf("Error al escribir bloque para serie %s: %v\n", cs.serie.Path, err)
-				cs.mu.Unlock()
-				continue
-			}
-
-			fmt.Println("Almacenando bloque para serie:", cs.serie.Path,
-				"Tiempo inicio:", tiempoInicio,
-				"Tiempo final:", tiempoFinal,
-				"Mediciones:", len(puntos),
-				"Tamaño comprimido:", len(bloqueComprimido))
-
-			// Eliminar puntos del WAL
-			timestamps := extraerTimestamps(puntos)
-			if err := me.eliminarPuntosIngesta(cs.serie.SerieId, timestamps); err != nil {
-				fmt.Printf("Error al eliminar puntos del WAL para serie %s: %v\n", cs.serie.Path, err)
-			}
-
-			// Decrementar contador
-			cs.decrementarContador(len(puntos))
-
-			cs.mu.Unlock()
 		}
 	}
 }
 
+// compactarUnBloque lee, comprime y escribe un bloque. Devuelve false si la
+// lectura, la compresión o la escritura fallan.
+func (me *GestorBorde) compactarUnBloque(cs *CoordinadorSerie) bool {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+
+	puntos, descartados, err := me.leerPuntosIngesta(cs.serie.SerieId, cs.serie.TamañoBloque)
+	if descartados > 0 {
+		cs.decrementarContador(descartados)
+	}
+	if err != nil || len(puntos) == 0 {
+		return false
+	}
+
+	bloqueComprimido, err := me.comprimirPuntos(puntos, cs.serie)
+	if err != nil {
+		fmt.Printf("Error al comprimir puntos para serie %s: %v\n", cs.serie.Path, err)
+		return false
+	}
+
+	tiempoInicio := puntos[0].Tiempo
+	tiempoFinal := puntos[len(puntos)-1].Tiempo
+	clave := generarClaveDatos(cs.serie.SerieId, tiempoInicio, tiempoFinal)
+	if err = me.db.Poner(clave, bloqueComprimido); err != nil {
+		fmt.Printf("Error al escribir bloque para serie %s: %v\n", cs.serie.Path, err)
+		return false
+	}
+
+	fmt.Println("Almacenando bloque para serie:", cs.serie.Path,
+		"Tiempo inicio:", tiempoInicio,
+		"Tiempo final:", tiempoFinal,
+		"Mediciones:", len(puntos),
+		"Tamaño comprimido:", len(bloqueComprimido))
+
+	timestamps := extraerTimestamps(puntos)
+	if err := me.eliminarPuntosIngesta(cs.serie.SerieId, timestamps); err != nil {
+		fmt.Printf("Error al eliminar puntos del WAL para serie %s: %v\n", cs.serie.Path, err)
+	}
+
+	cs.decrementarContador(len(puntos))
+	return true
+}
+
 // Insertar agrega un nuevo dato a la serie especificada
-func (me *GestorBorde) Insertar(path string, tiempo int64, dato interface{}) error {
-	// Obtener el coordinador para la serie
+func (me *GestorBorde) Insertar(path string, tiempo int64, dato any) error {
+	me.muIngesta.Lock()
+	if me.cerrado {
+		me.muIngesta.Unlock()
+		return fmt.Errorf("el nodo está cerrado")
+	}
+	me.enVuelo.Add(1)
+	me.muIngesta.Unlock()
+	defer me.enVuelo.Done()
+
 	csInterface, ok := me.coordinadores.Load(path)
 	if !ok {
-		return fmt.Errorf("serie no encontrada: %s", path)
+		return fmt.Errorf("%w: %s", errSerieNoEncontrada, path)
 	}
 
 	cs := csInterface.(*CoordinadorSerie)
 
-	// Validar compatibilidad de tipo
 	if !esCompatibleConTipo(dato, cs.serie.TipoDatos) {
-		return fmt.Errorf("tipo de dato incompatible: esperado %s, recibido %T",
-			cs.serie.TipoDatos, dato)
+		return fmt.Errorf("%w: esperado %s, recibido %T",
+			errTipoIncompatible, cs.serie.TipoDatos, dato)
 	}
 
 	// Crear la medición con tiempo y valor
@@ -976,10 +1022,7 @@ func (me *GestorBorde) EliminarSerie(path string) error {
 
 	// 3. Eliminar puntos del WAL
 	prefijoWAL := fmt.Sprintf("ingesta/%010d/", serieId)
-	iterWAL, err := me.db.NewIter(&pebble.IterOptions{
-		LowerBound: []byte(prefijoWAL),
-		UpperBound: []byte(fmt.Sprintf("ingesta/%010d0", serieId)),
-	})
+	iterWAL, err := me.db.Recorrer([]byte(prefijoWAL), []byte(fmt.Sprintf("ingesta/%010d0", serieId)))
 	if err != nil {
 		return fmt.Errorf("error al crear iterador para WAL: %v", err)
 	}
@@ -993,7 +1036,7 @@ func (me *GestorBorde) EliminarSerie(path string) error {
 	iterWAL.Close()
 
 	for _, clave := range clavesWAL {
-		if err := me.db.Delete(clave, pebble.Sync); err != nil {
+		if err := me.db.Borrar(clave); err != nil {
 			log.Printf("Advertencia: error al eliminar punto WAL %s: %v", string(clave), err)
 		}
 	}
@@ -1001,10 +1044,7 @@ func (me *GestorBorde) EliminarSerie(path string) error {
 	// 3. Eliminar todos los bloques de datos de PebbleDB
 	prefijoDatos := fmt.Sprintf("datos/%010d/", serieId)
 
-	iter, err := me.db.NewIter(&pebble.IterOptions{
-		LowerBound: []byte(prefijoDatos),
-		UpperBound: []byte(fmt.Sprintf("datos/%010d0", serieId)), // Siguiente serie
-	})
+	iter, err := me.db.Recorrer([]byte(prefijoDatos), []byte(fmt.Sprintf("datos/%010d0", serieId)))
 	if err != nil {
 		return fmt.Errorf("error al crear iterador para datos: %v", err)
 	}
@@ -1020,14 +1060,14 @@ func (me *GestorBorde) EliminarSerie(path string) error {
 
 	// Eliminar bloques de datos
 	for _, clave := range clavesAEliminar {
-		if err := me.db.Delete(clave, pebble.Sync); err != nil {
+		if err := me.db.Borrar(clave); err != nil {
 			log.Printf("Advertencia: error al eliminar bloque %s: %v", string(clave), err)
 		}
 	}
 
 	// 4. Eliminar metadatos de la serie
 	claveSerie := []byte("series/" + path)
-	if err := me.db.Delete(claveSerie, pebble.Sync); err != nil {
+	if err := me.db.Borrar(claveSerie); err != nil {
 		return fmt.Errorf("error al eliminar metadatos de serie: %v", err)
 	}
 
@@ -1038,8 +1078,7 @@ func (me *GestorBorde) EliminarSerie(path string) error {
 
 	log.Printf("Serie eliminada localmente: %s (ID: %d, bloques eliminados: %d)", path, serieId, len(clavesAEliminar))
 
-	// La eliminación de S3 se procesa automáticamente vía iniciarLimpiezaS3Automatica()
-	// que ejecuta procesarEliminacionesPendientes() cada 5 minutos.
+	// La eliminación de S3 la procesa el ciclo de S3, en el intervalo de IntervaloS3.
 	// La eliminación pendiente ya fue registrada en el paso 1 (si S3 estaba configurado).
 
 	return nil

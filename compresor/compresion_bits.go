@@ -18,16 +18,16 @@ Algoritmo:
 1. Calcular rango:
  • min ← valor mínimo del array
  • max ← valor máximo del array
- • range ← max - min
+ • distancia ← uint64(max) - uint64(min)
 
 2. Calcular bits necesarios:
- • Si range == 0: bits = 0 (todos los valores son iguales)
- • Sino: bits = ceil(log2(range + 1))
+ • Si distancia == 0: bits = 0 (todos los valores son iguales)
+ • Sino: bits = bits.Len64(distancia)
  • Máximo 64 bits
 
 3. Empaquetar valores:
  • Para cada valor v:
-   • normalized ← v - min
+   • normalized ← uint64(v) - uint64(min)
    • Escribir normalized usando bits_per_value bits
 
 4. Formato final:
@@ -48,6 +48,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math/bits"
+	"slices"
 )
 
 // CompresorBitsGenerico implementa compresión por bits para enteros
@@ -68,28 +69,15 @@ func (c *CompresorBitsGenerico[T]) Comprimir(valores []T) ([]byte, error) {
 		valoresInt[i] = aInt64(v)
 	}
 
-	// Calcular minimo y maximo
-	minimo := valoresInt[0]
-	maximo := valoresInt[0]
-	for _, v := range valoresInt {
-		if v < minimo {
-			minimo = v
-		}
-		if v > maximo {
-			maximo = v
-		}
-	}
+	minimo := slices.Min(valoresInt)
+	maximo := slices.Max(valoresInt)
 
-	// Calcular bits necesarios
-	rangeVal := maximo - minimo
+	distancia := uint64(maximo) - uint64(minimo)
 	var bitsNecesarios uint8
-
-	if rangeVal == 0 {
-		// Todos los valores son iguales
+	if distancia == 0 {
 		bitsNecesarios = 0
 	} else {
-		// Calcular bits necesarios: ceil(log2(range + 1))
-		bitsNecesarios = uint8(64 - bits.LeadingZeros64(uint64(rangeVal)))
+		bitsNecesarios = uint8(bits.Len64(distancia))
 	}
 
 	// Serializar header
@@ -108,7 +96,7 @@ func (c *CompresorBitsGenerico[T]) Comprimir(valores []T) ([]byte, error) {
 	// Empaquetar valores
 	writer := nuevoEscritorBits()
 	for _, v := range valoresInt {
-		normalized := uint64(v - minimo)
+		normalized := uint64(v) - uint64(minimo)
 		writer.escribirBits(normalized, int(bitsNecesarios))
 	}
 
@@ -167,7 +155,7 @@ func (c *CompresorBitsGenerico[T]) Descomprimir(datos []byte) ([]T, error) {
 			return nil, fmt.Errorf("error leyendo valor %d: %v", i, err)
 		}
 
-		valor := int64(normalized) + minimo
+		valor := int64(normalized + uint64(minimo))
 		resultado = append(resultado, desdeInt64[T](valor))
 	}
 

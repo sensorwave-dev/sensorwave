@@ -54,25 +54,25 @@ var (
 // algoritmosPorTipo mapea cada tipo de datos con sus algoritmos compatibles
 var algoritmosPorTipo = map[TipoDatos][]TipoCompresion{
 	Boolean: {
-		SinCompresion, // Sin compresión
-		RLE,           // Óptimo para secuencias de valores repetidos (true, true, false, false...)
+		SinCompresionBytes, // Sin compresión
+		RLE,                // Óptimo para secuencias de valores repetidos (true, true, false, false...)
 	},
 	Integer: {
-		SinCompresion, // Sin compresión
-		DeltaDelta,    // Óptimo para series monótonas (IDs incrementales, contadores)
-		RLE,           // Óptimo para valores repetidos
-		Bits,          // Óptimo para rangos pequeños (0-100, estados enumerados)
+		SinCompresionBytes, // Sin compresión
+		DeltaDelta,         // Óptimo para series monótonas (IDs incrementales, contadores)
+		RLE,                // Óptimo para valores repetidos
+		Bits,               // Óptimo para rangos pequeños (0-100, estados enumerados)
 	},
 	Real: {
-		SinCompresion, // Sin compresión
-		DeltaDelta,    // Bueno para series con tendencia lineal
-		Xor,           // Óptimo para flotantes con cambios pequeños (sensores de temperatura)
-		RLE,           // Para valores repetidos (poco común en flotantes)
+		SinCompresionBytes, // Sin compresión
+		DeltaDelta,         // Bueno para series con tendencia lineal
+		Xor,                // Óptimo para flotantes con cambios pequeños (sensores de temperatura)
+		RLE,                // Para valores repetidos (poco común en flotantes)
 	},
 	Text: {
-		SinCompresion, // Sin compresión
-		RLE,           // Para secuencias repetidas de strings
-		Diccionario,   // Óptimo para vocabulario limitado (estados: "activo", "inactivo", "error")
+		SinCompresionBytes, // Sin compresión
+		RLE,                // Para secuencias repetidas de strings
+		Diccionario,        // Óptimo para vocabulario limitado (estados: "activo", "inactivo", "error")
 	},
 }
 
@@ -81,8 +81,8 @@ func (td TipoDatos) AlgoritmosCompresion() []TipoCompresion {
 	if algoritmos, existe := algoritmosPorTipo[td]; existe {
 		return algoritmos
 	}
-	// Si no hay algoritmos registrados, retornar solo SinCompresion
-	return []TipoCompresion{SinCompresion}
+	// Si no hay algoritmos registrados, retornar solo SinCompresionBytes
+	return []TipoCompresion{SinCompresionBytes}
 }
 
 // ValidarCompresion verifica si un algoritmo es compatible con este tipo de datos

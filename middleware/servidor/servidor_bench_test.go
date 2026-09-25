@@ -4,33 +4,11 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"sync/atomic"
 	"testing"
-
-	"github.com/sensorwave-dev/sensorwave/middleware"
 )
-
-type upstreamMock struct {
-	publicaciones atomic.Int64
-}
 
 func init() {
 	log.SetOutput(io.Discard)
-}
-
-func (m *upstreamMock) Desconectar() {}
-
-func (m *upstreamMock) Publicar(topico string, mensaje interface{}, opciones ...middleware.PublicarOpcion) error {
-	m.publicaciones.Add(1)
-	return nil
-}
-
-func (m *upstreamMock) Suscribir(topico string, manejador middleware.CallbackFunc) error {
-	return nil
-}
-
-func (m *upstreamMock) Desuscribir(topico string) error {
-	return nil
 }
 
 func prepararClientesHTTP(cantidad int, patron string) {
@@ -69,37 +47,5 @@ func BenchmarkEnviarHTTPQoS0_100Clientes(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		enviarHTTP("BENCH", payload)
-	}
-}
-
-func BenchmarkReenviarUpstream_SinUpstream(b *testing.B) {
-	ConfigurarUpstream(nil)
-	m := Mensaje{Topico: "sensores/temperatura", Payload: []byte("25")}
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		reenviarUpstream(m)
-	}
-}
-
-func BenchmarkReenviarUpstream_OrigenLocal(b *testing.B) {
-	mock := &upstreamMock{}
-	ConfigurarUpstream(mock)
-	m := Mensaje{Topico: "sensores/temperatura", Payload: []byte("25"), Origen: obtenerIDInstancia()}
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		reenviarUpstream(m)
-	}
-}
-
-func BenchmarkReenviarUpstream_OrigenRemoto(b *testing.B) {
-	mock := &upstreamMock{}
-	ConfigurarUpstream(mock)
-	m := Mensaje{Topico: "sensores/temperatura", Payload: []byte("25"), Origen: "instancia-remota"}
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		reenviarUpstream(m)
 	}
 }

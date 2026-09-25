@@ -8,25 +8,14 @@ import (
 // ErrTopicoInvalido indica que el tópico/fliltro no supera la validación.
 var ErrTopicoInvalido = errors.New("topico invalido")
 
-// PrefijoControl identifica al plano de control federado.
-// Debe mantenerse en sincronía con tipos.PrefijoControl (definido en
-// tipos/control_federacion.go). Se duplica acá para no arrastrar las
-// dependencias del paquete tipos (AWS SDK, pebble) hacia los clientes
-// livianos (cliente_mqtt, etc.) que importan este paquete.
+// PrefijoControl identifica al plano de control federado (swctl/).
+// Se define en este paquete (y no se importa desde tipos) para no
+// arrastrar las dependencias pesadas de tipos hacia los clientes livianos.
 const PrefijoControl = "swctl/"
 
 // EsTopicoControl indica si un tópico pertenece al plano de control federado.
 func EsTopicoControl(topico string) bool {
 	return strings.HasPrefix(topico, PrefijoControl)
-}
-
-// EsTopicoPermitidoParaProtocolo indica si un tópico puede usarse en un protocolo
-// dado. swctl/# sólo está permitido en MQTT.
-func EsTopicoPermitidoParaProtocolo(topico string, protocolo string) bool {
-	if !EsTopicoControl(topico) {
-		return true
-	}
-	return strings.ToLower(protocolo) == "mqtt"
 }
 
 // NormalizarYValidarTopico canoniza el topico y valida su formato.

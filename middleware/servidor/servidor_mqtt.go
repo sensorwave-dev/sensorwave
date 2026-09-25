@@ -6,7 +6,6 @@ import (
 
 	mochi "github.com/mochi-mqtt/server/v2"
 	"github.com/mochi-mqtt/server/v2/hooks/auth"
-	"github.com/mochi-mqtt/server/v2/listeners"
 	"github.com/mochi-mqtt/server/v2/packets"
 	"github.com/sensorwave-dev/sensorwave/middleware"
 )
@@ -92,21 +91,17 @@ func (h *hookMQTT) OnPublish(cl *mochi.Client, pk packets.Packet) (packets.Packe
 	// a "test" nunca recibe (mochi compara filtro vs TopicName crudos).
 	pk.TopicName = topicoMQTT
 	mensaje.Topico = mensajeTopico
-	asignarOrigenSiVacio(&mensaje)
-	loggerPrint(LOG_MQTT, "Mensaje recibido - Tópico: %s, QoS: %d, MensajeID: %s", mensaje.Topico, mensaje.QoS, mensaje.MensajeID)
 
 	// En proceso: el broker entrega a suscriptores MQTT automáticamente al
 	// retornar nil. Acá sólo disparamos el fanout hacia los otros protocolos.
 	if mensaje.Original {
 		mensaje.Original = false
 		if middleware.EsTopicoControl(mensaje.Topico) {
-			// Plano de control: solo federación upstream, no fanout a HTTP/CoAP.
-			go reenviarUpstream(mensaje)
+			// Plano de control: no fanout a HTTP/CoAP.
 			return pk, nil
 		}
 		go enviarCoAP(LOG_MQTT, mensaje)
 		go enviarHTTP(LOG_MQTT, mensaje)
-		go reenviarUpstream(mensaje)
 	}
 
 	return pk, nil
@@ -178,15 +173,12 @@ func IniciarMQTT(puerto string) {
 		loggerFatal(LOG_MQTT, "Error - No se pudo agregar hook de auth: %v", err)
 	}
 
-	// Hook de SensorWave: fanout a HTTP/CoAP/upstream + control de PUBACK.
+	// Hook de SensorWave: fanout a HTTP/CoAP + control de PUBACK.
 	if err := brokerMQTT.AddHook(new(hookMQTT), hookMQTTOptions{}); err != nil {
 		loggerFatal(LOG_MQTT, "Error - No se pudo agregar hook de publish: %v", err)
 	}
 
-	tcp := listeners.NewTCP(listeners.Config{
-		ID:      "sensorwave-tcp",
-		Address: ":" + puerto,
-	})
+	tcp := newTCPNoDelay("sensorwave-tcp", ":"+puerto)
 	if err := brokerMQTT.AddListener(tcp); err != nil {
 		loggerFatal(LOG_MQTT, "Error - No se pudo agregar listener TCP: %v", err)
 	}

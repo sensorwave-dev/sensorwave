@@ -2,6 +2,7 @@ package tipos
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -10,7 +11,26 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
 )
+
+// BucketNoExiste informa si HeadBucket falló porque el bucket no está.
+func BucketNoExiste(err error) bool {
+	if err == nil {
+		return false
+	}
+	var noEncontrado *s3types.NotFound
+	if errors.As(err, &noEncontrado) {
+		return true
+	}
+	var api smithy.APIError
+	if errors.As(err, &api) {
+		codigo := api.ErrorCode()
+		return codigo == "NotFound" || codigo == "NoSuchBucket"
+	}
+	return false
+}
 
 // ConfiguracionS3 contiene la configuración para conectar con almacenamiento S3-compatible
 // (Garage, AWS S3, Cloudflare R2, MinIO, etc.).

@@ -13,7 +13,7 @@ import (
 //   - datosComprimidos: bloque de datos comprimido
 //   - tipoDatos: tipo de datos de la serie (Boolean, Integer, Real, Text)
 //   - compresionBytes: algoritmo de compresión de valores (DeltaDelta, Xor, RLE, etc.)
-//   - compresionBloque: algoritmo de compresión de bloque (LZ4, ZSTD, Snappy, Gzip, Ninguna)
+//   - compresionBloque: algoritmo de compresión de bloque (LZ4, ZSTD, Snappy, Gzip, SinCompresionBloque)
 //
 // Retorna:
 //   - []tipos.Medicion: slice de mediciones descomprimidas
@@ -83,7 +83,7 @@ func descomprimirValoresInteger(tiempos []int64, valoresComprimidos []byte, comp
 	case tipos.Bits:
 		comp := &CompresorBitsGenerico[int64]{}
 		valores, err = comp.Descomprimir(valoresComprimidos)
-	case tipos.SinCompresion:
+	case tipos.SinCompresionBytes:
 		comp := &CompresorNingunoGenerico[int64]{}
 		valores, err = comp.Descomprimir(valoresComprimidos)
 	default:
@@ -116,7 +116,7 @@ func descomprimirValoresReal(tiempos []int64, valoresComprimidos []byte, compres
 	case tipos.RLE:
 		comp := &CompresorRLEGenerico[float64]{}
 		valores, err = comp.Descomprimir(valoresComprimidos)
-	case tipos.SinCompresion:
+	case tipos.SinCompresionBytes:
 		comp := &CompresorNingunoGenerico[float64]{}
 		valores, err = comp.Descomprimir(valoresComprimidos)
 	default:
@@ -143,7 +143,7 @@ func descomprimirValoresBoolean(tiempos []int64, valoresComprimidos []byte, comp
 	case tipos.RLE:
 		comp := &CompresorRLEGenerico[bool]{}
 		valores, err = comp.Descomprimir(valoresComprimidos)
-	case tipos.SinCompresion:
+	case tipos.SinCompresionBytes:
 		comp := &CompresorNingunoGenerico[bool]{}
 		valores, err = comp.Descomprimir(valoresComprimidos)
 	default:
@@ -173,7 +173,7 @@ func descomprimirValoresText(tiempos []int64, valoresComprimidos []byte, compres
 	case tipos.RLE:
 		comp := &CompresorRLEGenerico[string]{}
 		valores, err = comp.Descomprimir(valoresComprimidos)
-	case tipos.SinCompresion:
+	case tipos.SinCompresionBytes:
 		comp := &CompresorNingunoGenerico[string]{}
 		valores, err = comp.Descomprimir(valoresComprimidos)
 	default:

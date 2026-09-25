@@ -5,9 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"net/http"
-	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -575,12 +572,11 @@ func TestConsultarUltimoPuntoBorde_Exitoso(t *testing.T) {
 	}
 
 	nodo := tipos.Nodo{
-		NodoID:     "nodo1",
-		Direccion:  "192.168.1.100",
-		PuertoHTTP: "8080",
+		NodoID:    "nodo1",
+		Direccion: "192.168.1.100",
 	}
 
-	resultado, err := m.consultarPuntoBorde(nodo, "/sensores/temp", nil, nil, 5*time.Second)
+	resultado, err := m.consultarPuntoBorde(t.Context(), nodo, "/sensores/temp", nil, nil, 5*time.Second)
 
 	assert.NoError(t, err)
 	require.Len(t, resultado.Series, 1)
@@ -601,12 +597,11 @@ func TestConsultarUltimoPuntoBorde_SinDatos(t *testing.T) {
 	}
 
 	nodo := tipos.Nodo{
-		NodoID:     "nodo1",
-		Direccion:  "192.168.1.100",
-		PuertoHTTP: "8080",
+		NodoID:    "nodo1",
+		Direccion: "192.168.1.100",
 	}
 
-	resultado, err := m.consultarPuntoBorde(nodo, "/sensores/temp", nil, nil, 5*time.Second)
+	resultado, err := m.consultarPuntoBorde(t.Context(), nodo, "/sensores/temp", nil, nil, 5*time.Second)
 
 	assert.NoError(t, err)
 	assert.Empty(t, resultado.Series)
@@ -624,12 +619,11 @@ func TestConsultarUltimoPuntoBorde_ErrorConexion(t *testing.T) {
 	}
 
 	nodo := tipos.Nodo{
-		NodoID:     "nodo1",
-		Direccion:  "192.168.1.100",
-		PuertoHTTP: "8080",
+		NodoID:    "nodo1",
+		Direccion: "192.168.1.100",
 	}
 
-	_, err := m.consultarPuntoBorde(nodo, "/sensores/temp", nil, nil, 5*time.Second)
+	_, err := m.consultarPuntoBorde(t.Context(), nodo, "/sensores/temp", nil, nil, 5*time.Second)
 
 	assert.Error(t, err)
 	t.Log("consultarPuntoBorde retorna error cuando hay falla de conexion")
@@ -648,12 +642,11 @@ func TestConsultarUltimoPuntoBorde_ErrorDelBorde(t *testing.T) {
 	}
 
 	nodo := tipos.Nodo{
-		NodoID:     "nodo1",
-		Direccion:  "192.168.1.100",
-		PuertoHTTP: "8080",
+		NodoID:    "nodo1",
+		Direccion: "192.168.1.100",
 	}
 
-	_, err := m.consultarPuntoBorde(nodo, "/sensores/temp", nil, nil, 5*time.Second)
+	_, err := m.consultarPuntoBorde(t.Context(), nodo, "/sensores/temp", nil, nil, 5*time.Second)
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "serie no encontrada")
@@ -684,12 +677,11 @@ func TestConsultarBordeConTimeout_Exitoso(t *testing.T) {
 	}
 
 	nodo := tipos.Nodo{
-		NodoID:     "nodo1",
-		Direccion:  "192.168.1.100",
-		PuertoHTTP: "8080",
+		NodoID:    "nodo1",
+		Direccion: "192.168.1.100",
 	}
 
-	resultado, err := m.consultarBordeConTimeout(nodo, "/sensores/temp", 1000, 3000, 5*time.Second)
+	resultado, err := m.consultarBordeConTimeout(t.Context(), nodo, "/sensores/temp", 1000, 3000, 5*time.Second)
 
 	assert.NoError(t, err)
 	assert.Len(t, resultado.Tiempos, 3)
@@ -711,19 +703,18 @@ func TestConsultarBordeConTimeout_SinDatos(t *testing.T) {
 	}
 
 	nodo := tipos.Nodo{
-		NodoID:     "nodo1",
-		Direccion:  "192.168.1.100",
-		PuertoHTTP: "8080",
+		NodoID:    "nodo1",
+		Direccion: "192.168.1.100",
 	}
 
-	resultado, err := m.consultarBordeConTimeout(nodo, "/sensores/temp", 1000, 3000, 5*time.Second)
+	resultado, err := m.consultarBordeConTimeout(t.Context(), nodo, "/sensores/temp", 1000, 3000, 5*time.Second)
 
 	assert.NoError(t, err)
 	assert.Empty(t, resultado.Tiempos)
 	t.Log("consultarBordeConTimeout retorna resultado vacío cuando no hay datos")
 }
 
-// TestConsultarBordeConTimeout_ErrorConexion verifica que error de conexion retorna resultado vacío
+// TestConsultarBordeConTimeout_ErrorConexion verifica que un error de conexion se propaga
 func TestConsultarBordeConTimeout_ErrorConexion(t *testing.T) {
 	mockBorde := &mockClienteBorde{
 		err: assert.AnError,
@@ -734,18 +725,16 @@ func TestConsultarBordeConTimeout_ErrorConexion(t *testing.T) {
 	}
 
 	nodo := tipos.Nodo{
-		NodoID:     "nodo1",
-		Direccion:  "192.168.1.100",
-		PuertoHTTP: "8080",
+		NodoID:    "nodo1",
+		Direccion: "192.168.1.100",
 	}
 
-	// Error de conexion retorna resultado vacío sin error (el borde puede estar offline)
-	resultado, err := m.consultarBordeConTimeout(nodo, "/sensores/temp", 1000, 3000, 5*time.Second)
+	resultado, err := m.consultarBordeConTimeout(t.Context(), nodo, "/sensores/temp", 1000, 3000, 5*time.Second)
 
-	assert.Nil(t, err)
+	assert.Error(t, err)
 	assert.Empty(t, resultado.Tiempos)
 	assert.Empty(t, resultado.Series)
-	t.Log("consultarBordeConTimeout retorna resultado vacío cuando hay error de conexion")
+	t.Log("consultarBordeConTimeout propaga error de conexion")
 }
 
 // TestConsultarBordeConTimeout_ErrorDelBorde verifica manejo de error reportado por el borde
@@ -761,12 +750,11 @@ func TestConsultarBordeConTimeout_ErrorDelBorde(t *testing.T) {
 	}
 
 	nodo := tipos.Nodo{
-		NodoID:     "nodo1",
-		Direccion:  "192.168.1.100",
-		PuertoHTTP: "8080",
+		NodoID:    "nodo1",
+		Direccion: "192.168.1.100",
 	}
 
-	_, err := m.consultarBordeConTimeout(nodo, "/sensores/temp", 1000, 3000, 5*time.Second)
+	_, err := m.consultarBordeConTimeout(t.Context(), nodo, "/sensores/temp", 1000, 3000, 5*time.Second)
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "serie no existe")
@@ -998,7 +986,7 @@ func TestConsultarRango_SerieNoEncontrada(t *testing.T) {
 		nodos: make(map[string]*tipos.Nodo),
 	}
 
-	_, err := m.ConsultarRango("/sensores/noexiste", time.Now().Add(-1*time.Hour), time.Now())
+	_, err := m.ConsultarRango(t.Context(), "/sensores/noexiste", time.Now().Add(-1*time.Hour), time.Now())
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no encontrada")
@@ -1026,9 +1014,8 @@ func TestConsultarRango_SoloBorde(t *testing.T) {
 	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
-				NodoID:     "nodo1",
-				Direccion:  "192.168.1.100",
-				PuertoHTTP: "8080",
+				NodoID:    "nodo1",
+				Direccion: "192.168.1.100",
 				Series: map[string]tipos.Serie{
 					"/sensores/temp": {SerieId: 1, Path: "/sensores/temp"},
 				},
@@ -1042,7 +1029,7 @@ func TestConsultarRango_SoloBorde(t *testing.T) {
 	inicio := time.Unix(0, 500)
 	fin := time.Unix(0, 3000)
 
-	resultado, err := m.ConsultarRango("/sensores/temp", inicio, fin)
+	resultado, err := m.ConsultarRango(t.Context(), "/sensores/temp", inicio, fin)
 
 	assert.NoError(t, err)
 	assert.Len(t, resultado.Tiempos, 2)
@@ -1065,9 +1052,8 @@ func TestConsultarRango_BordeOffline(t *testing.T) {
 	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
-				NodoID:     "nodo1",
-				Direccion:  "192.168.1.100",
-				PuertoHTTP: "8080",
+				NodoID:    "nodo1",
+				Direccion: "192.168.1.100",
 				Series: map[string]tipos.Serie{
 					"/sensores/temp": {SerieId: 1, Path: "/sensores/temp"},
 				},
@@ -1082,7 +1068,7 @@ func TestConsultarRango_BordeOffline(t *testing.T) {
 	fin := time.Unix(0, 3000)
 
 	// Debe continuar con datos de S3 incluso si el borde falla
-	resultado, err := m.ConsultarRango("/sensores/temp", inicio, fin)
+	resultado, err := m.ConsultarRango(t.Context(), "/sensores/temp", inicio, fin)
 
 	assert.NoError(t, err)
 	assert.Empty(t, resultado.Tiempos)
@@ -1104,9 +1090,8 @@ func TestConsultarRango_ErrorS3(t *testing.T) {
 	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
-				NodoID:     "nodo1",
-				Direccion:  "192.168.1.100",
-				PuertoHTTP: "8080",
+				NodoID:    "nodo1",
+				Direccion: "192.168.1.100",
 				Series: map[string]tipos.Serie{
 					"/sensores/temp": {SerieId: 1, Path: "/sensores/temp"},
 				},
@@ -1121,7 +1106,7 @@ func TestConsultarRango_ErrorS3(t *testing.T) {
 	fin := time.Unix(0, 3000)
 
 	// S3 falla -> error critico
-	_, err := m.ConsultarRango("/sensores/temp", inicio, fin)
+	_, err := m.ConsultarRango(t.Context(), "/sensores/temp", inicio, fin)
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "S3")
@@ -1138,7 +1123,7 @@ func TestConsultarUltimoPunto_SerieNoEncontrada(t *testing.T) {
 		nodos: make(map[string]*tipos.Nodo),
 	}
 
-	_, err := m.ConsultarUltimoPunto("/sensores/noexiste", nil, nil)
+	_, err := m.ConsultarUltimoPunto(t.Context(), "/sensores/noexiste", nil, nil)
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no encontrada")
@@ -1154,9 +1139,8 @@ func TestConsultarUltimoPunto_DesdeBorde(t *testing.T) {
 	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
-				NodoID:     "nodo1",
-				Direccion:  "192.168.1.100",
-				PuertoHTTP: "8080",
+				NodoID:    "nodo1",
+				Direccion: "192.168.1.100",
 				Series: map[string]tipos.Serie{
 					"/sensores/temp": {SerieId: 1, Path: "/sensores/temp"},
 				},
@@ -1165,7 +1149,7 @@ func TestConsultarUltimoPunto_DesdeBorde(t *testing.T) {
 		clienteBorde: mockBorde,
 	}
 
-	resultado, err := m.ConsultarUltimoPunto("/sensores/temp", nil, nil)
+	resultado, err := m.ConsultarUltimoPunto(t.Context(), "/sensores/temp", nil, nil)
 
 	assert.NoError(t, err)
 	require.Len(t, resultado.Series, 1)
@@ -1190,9 +1174,8 @@ func TestConsultarUltimoPunto_BordeOffline_SinDatosS3(t *testing.T) {
 	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
-				NodoID:     "nodo1",
-				Direccion:  "192.168.1.100",
-				PuertoHTTP: "8080",
+				NodoID:    "nodo1",
+				Direccion: "192.168.1.100",
 				Series: map[string]tipos.Serie{
 					"/sensores/temp": {SerieId: 1, Path: "/sensores/temp"},
 				},
@@ -1203,7 +1186,7 @@ func TestConsultarUltimoPunto_BordeOffline_SinDatosS3(t *testing.T) {
 		config:       tipos.ConfiguracionS3{Bucket: "test-bucket"},
 	}
 
-	_, err := m.ConsultarUltimoPunto("/sensores/temp", nil, nil)
+	_, err := m.ConsultarUltimoPunto(t.Context(), "/sensores/temp", nil, nil)
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no se encontraron datos")
@@ -1235,7 +1218,7 @@ func crearBloqueComprimidoTest(t *testing.T, mediciones []tipos.Medicion, tipoDa
 		case tipos.DeltaDelta:
 			c := &compresor.CompresorDeltaDeltaGenerico[int64]{}
 			valoresComprimidos, err = c.Comprimir(valores)
-		case tipos.SinCompresion:
+		case tipos.SinCompresionBytes:
 			c := &compresor.CompresorNingunoGenerico[int64]{}
 			valoresComprimidos, err = c.Comprimir(valores)
 		}
@@ -1245,7 +1228,7 @@ func crearBloqueComprimidoTest(t *testing.T, mediciones []tipos.Medicion, tipoDa
 			valores[i] = m.Valor.(float64)
 		}
 		switch compresionBytes {
-		case tipos.SinCompresion:
+		case tipos.SinCompresionBytes:
 			c := &compresor.CompresorNingunoGenerico[float64]{}
 			valoresComprimidos, err = c.Comprimir(valores)
 		case tipos.Xor:
@@ -1267,197 +1250,6 @@ func crearBloqueComprimidoTest(t *testing.T, mediciones []tipos.Medicion, tipoDa
 }
 
 // ============================================================================
-// TESTS DE CLIENTE BORDE HTTP (httptest)
-// ============================================================================
-
-// TestClienteBordeHTTP_ConsultarRango_Exitoso verifica consulta exitosa via HTTP
-func TestClienteBordeHTTP_ConsultarRango_Exitoso(t *testing.T) {
-	// Crear respuesta esperada
-	respuestaEsperada := tipos.RespuestaConsultaRango{
-		Resultado: tipos.ResultadoConsultaRango{
-			Series:  []string{"/sensores/temp"},
-			Tiempos: []int64{1000, 2000},
-			Valores: [][]interface{}{{10.0}, {20.0}},
-		},
-		Error: "",
-	}
-
-	// Serializar respuesta
-	respuestaBytes, err := tipos.SerializarGob(respuestaEsperada)
-	require.NoError(t, err)
-
-	// Crear servidor HTTP mock
-	servidor := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Verificar método y path
-		assert.Equal(t, http.MethodPost, r.Method)
-		assert.True(t, strings.HasSuffix(r.URL.Path, "/api/consulta/rango"))
-
-		w.WriteHeader(http.StatusOK)
-		w.Write(respuestaBytes)
-	}))
-	defer servidor.Close()
-
-	// Crear cliente y hacer consulta
-	cliente := nuevoClienteBordeHTTP()
-
-	// Extraer host:port del servidor de test
-	direccion := strings.TrimPrefix(servidor.URL, "http://")
-
-	solicitud := tipos.SolicitudConsultaRango{
-		Serie:        "/sensores/temp",
-		TiempoInicio: 1000,
-		TiempoFin:    2000,
-	}
-
-	respuesta, err := cliente.ConsultarRango(context.Background(), "1", direccion, solicitud)
-
-	assert.NoError(t, err)
-	assert.NotNil(t, respuesta)
-	assert.Len(t, respuesta.Resultado.Tiempos, 2)
-	assert.Equal(t, int64(1000), respuesta.Resultado.Tiempos[0])
-	t.Log("clienteBordeHTTP.ConsultarRango funciona correctamente via HTTP")
-}
-
-// TestClienteBordeHTTP_ConsultarRango_ErrorHTTP verifica manejo de error HTTP
-func TestClienteBordeHTTP_ConsultarRango_ErrorHTTP(t *testing.T) {
-	// Crear servidor que retorna error
-	servidor := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("internal server error"))
-	}))
-	defer servidor.Close()
-
-	cliente := nuevoClienteBordeHTTP()
-	direccion := strings.TrimPrefix(servidor.URL, "http://")
-
-	solicitud := tipos.SolicitudConsultaRango{
-		Serie:        "/sensores/temp",
-		TiempoInicio: 1000,
-		TiempoFin:    2000,
-	}
-
-	_, err := cliente.ConsultarRango(context.Background(), "1", direccion, solicitud)
-
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "500")
-	t.Log("clienteBordeHTTP.ConsultarRango maneja errores HTTP correctamente")
-}
-
-// TestClienteBordeHTTP_ConsultarRango_ErrorConexion verifica manejo de error de conexion
-func TestClienteBordeHTTP_ConsultarRango_ErrorConexion(t *testing.T) {
-	cliente := nuevoClienteBordeHTTP()
-
-	// Usar direccion invalida
-	solicitud := tipos.SolicitudConsultaRango{
-		Serie:        "/sensores/temp",
-		TiempoInicio: 1000,
-		TiempoFin:    2000,
-	}
-
-	_, err := cliente.ConsultarRango(context.Background(), "localhost:99999", "1", solicitud)
-
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "error en request HTTP")
-	t.Log("clienteBordeHTTP.ConsultarRango maneja errores de conexion")
-}
-
-// TestClienteBordeHTTP_ConsultarRango_ErrorDeserializacion verifica manejo de respuesta invalida
-func TestClienteBordeHTTP_ConsultarRango_ErrorDeserializacion(t *testing.T) {
-	// Crear servidor que retorna datos invalidos
-	servidor := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("datos invalidos que no son gob"))
-	}))
-	defer servidor.Close()
-
-	cliente := nuevoClienteBordeHTTP()
-	direccion := strings.TrimPrefix(servidor.URL, "http://")
-
-	solicitud := tipos.SolicitudConsultaRango{
-		Serie:        "/sensores/temp",
-		TiempoInicio: 1000,
-		TiempoFin:    2000,
-	}
-
-	_, err := cliente.ConsultarRango(context.Background(), "1", direccion, solicitud)
-
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "deserializando")
-	t.Log("clienteBordeHTTP.ConsultarRango maneja errores de deserializacion")
-}
-
-// TestClienteBordeHTTP_ConsultarUltimoPunto_Exitoso verifica consulta de punto via HTTP
-func TestClienteBordeHTTP_ConsultarUltimoPunto_Exitoso(t *testing.T) {
-	// Crear respuesta esperada en formato columnar
-	respuestaEsperada := tipos.RespuestaConsultaPunto{
-		Resultado: tipos.ResultadoConsultaPunto{
-			Series:  []string{"/sensores/temp"},
-			Tiempos: []int64{5000},
-			Valores: []interface{}{50.0},
-		},
-	}
-
-	respuestaBytes, err := tipos.SerializarGob(respuestaEsperada)
-	require.NoError(t, err)
-
-	servidor := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodPost, r.Method)
-		assert.True(t, strings.HasSuffix(r.URL.Path, "/api/consulta/ultimo"))
-
-		w.WriteHeader(http.StatusOK)
-		w.Write(respuestaBytes)
-	}))
-	defer servidor.Close()
-
-	cliente := nuevoClienteBordeHTTP()
-	direccion := strings.TrimPrefix(servidor.URL, "http://")
-
-	solicitud := tipos.SolicitudConsultaPunto{
-		Serie: "/sensores/temp",
-	}
-
-	respuesta, err := cliente.ConsultarUltimoPunto(context.Background(), "1", direccion, solicitud)
-
-	assert.NoError(t, err)
-	assert.NotNil(t, respuesta)
-	require.Len(t, respuesta.Resultado.Series, 1)
-	assert.Equal(t, "/sensores/temp", respuesta.Resultado.Series[0])
-	assert.Equal(t, int64(5000), respuesta.Resultado.Tiempos[0])
-	t.Log("clienteBordeHTTP.ConsultarUltimoPunto funciona correctamente")
-}
-
-// TestClienteBordeHTTP_ConsultarUltimoPunto_ErrorHTTP verifica manejo de error HTTP
-func TestClienteBordeHTTP_ConsultarUltimoPunto_ErrorHTTP(t *testing.T) {
-	servidor := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-		w.Write([]byte("serie no encontrada"))
-	}))
-	defer servidor.Close()
-
-	cliente := nuevoClienteBordeHTTP()
-	direccion := strings.TrimPrefix(servidor.URL, "http://")
-
-	solicitud := tipos.SolicitudConsultaPunto{Serie: "/sensores/noexiste"}
-	_, err := cliente.ConsultarUltimoPunto(context.Background(), "1", direccion, solicitud)
-
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "404")
-	t.Log("clienteBordeHTTP.ConsultarUltimoPunto maneja errores HTTP")
-}
-
-// TestClienteBordeHTTP_ConsultarUltimoPunto_ErrorConexion verifica error de conexion
-func TestClienteBordeHTTP_ConsultarUltimoPunto_ErrorConexion(t *testing.T) {
-	cliente := nuevoClienteBordeHTTP()
-
-	solicitud := tipos.SolicitudConsultaPunto{Serie: "/sensores/temp"}
-	_, err := cliente.ConsultarUltimoPunto(context.Background(), "1", "localhost:99999", solicitud)
-
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "error en request HTTP")
-	t.Log("clienteBordeHTTP.ConsultarUltimoPunto maneja errores de conexion")
-}
-
-// ============================================================================
 // TESTS DE DESCARGAR Y DESCOMPRIMIR BLOQUE
 // ============================================================================
 
@@ -1471,7 +1263,7 @@ func TestDescargarYDescomprimirBloque_Exitoso(t *testing.T) {
 	}
 
 	// Crear bloque comprimido
-	bloqueComprimido := crearBloqueComprimidoTest(t, mediciones, tipos.Integer, tipos.DeltaDelta, tipos.Ninguna)
+	bloqueComprimido := crearBloqueComprimidoTest(t, mediciones, tipos.Integer, tipos.DeltaDelta, tipos.SinCompresionBloque)
 
 	mockS3 := &mockClienteS3{
 		getObjectData: bloqueComprimido,
@@ -1486,7 +1278,7 @@ func TestDescargarYDescomprimirBloque_Exitoso(t *testing.T) {
 		SerieId:          1,
 		TipoDatos:        tipos.Integer,
 		CompresionBytes:  tipos.DeltaDelta,
-		CompresionBloque: tipos.Ninguna,
+		CompresionBloque: tipos.SinCompresionBloque,
 	}
 
 	resultado, err := m.descargarYDescomprimirBloque("nodo1/data/0000000001/bloque", serie)
@@ -1513,7 +1305,7 @@ func TestDescargarYDescomprimirBloque_ErrorDescarga(t *testing.T) {
 		SerieId:          1,
 		TipoDatos:        tipos.Integer,
 		CompresionBytes:  tipos.DeltaDelta,
-		CompresionBloque: tipos.Ninguna,
+		CompresionBloque: tipos.SinCompresionBloque,
 	}
 
 	_, err := m.descargarYDescomprimirBloque("nodo1/data/0000000001/bloque", serie)
@@ -1562,7 +1354,7 @@ func TestConsultarDatosS3_ConBloquesValidos(t *testing.T) {
 		{Tiempo: 4000, Valor: int64(40)},
 	}
 
-	bloqueComprimido := crearBloqueComprimidoTest(t, mediciones, tipos.Integer, tipos.DeltaDelta, tipos.Ninguna)
+	bloqueComprimido := crearBloqueComprimidoTest(t, mediciones, tipos.Integer, tipos.DeltaDelta, tipos.SinCompresionBloque)
 
 	mockS3 := &mockClienteS3{
 		listObjectsOutput: &s3.ListObjectsV2Output{
@@ -1583,7 +1375,7 @@ func TestConsultarDatosS3_ConBloquesValidos(t *testing.T) {
 		SerieId:          1,
 		TipoDatos:        tipos.Integer,
 		CompresionBytes:  tipos.DeltaDelta,
-		CompresionBloque: tipos.Ninguna,
+		CompresionBloque: tipos.SinCompresionBloque,
 	}
 
 	// Consultar rango que incluye solo algunas mediciones
@@ -1608,7 +1400,7 @@ func TestConsultarUltimoPunto_DesdeS3(t *testing.T) {
 		{Tiempo: 3000, Valor: int64(30)},
 	}
 
-	bloqueComprimido := crearBloqueComprimidoTest(t, mediciones, tipos.Integer, tipos.DeltaDelta, tipos.Ninguna)
+	bloqueComprimido := crearBloqueComprimidoTest(t, mediciones, tipos.Integer, tipos.DeltaDelta, tipos.SinCompresionBloque)
 
 	// Mock borde que no encuentra datos (retorna resultado vacío)
 	mockBorde := &mockClienteBorde{
@@ -1627,16 +1419,15 @@ func TestConsultarUltimoPunto_DesdeS3(t *testing.T) {
 	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
-				NodoID:     "nodo1",
-				Direccion:  "192.168.1.100",
-				PuertoHTTP: "8080",
+				NodoID:    "nodo1",
+				Direccion: "192.168.1.100",
 				Series: map[string]tipos.Serie{
 					"/sensores/temp": {
 						SerieId:          1,
 						Path:             "/sensores/temp",
 						TipoDatos:        tipos.Integer,
 						CompresionBytes:  tipos.DeltaDelta,
-						CompresionBloque: tipos.Ninguna,
+						CompresionBloque: tipos.SinCompresionBloque,
 					},
 				},
 			},
@@ -1646,7 +1437,7 @@ func TestConsultarUltimoPunto_DesdeS3(t *testing.T) {
 		config:       tipos.ConfiguracionS3{Bucket: "test-bucket"},
 	}
 
-	resultado, err := m.ConsultarUltimoPunto("/sensores/temp", nil, nil)
+	resultado, err := m.ConsultarUltimoPunto(t.Context(), "/sensores/temp", nil, nil)
 
 	assert.NoError(t, err)
 	// Debe retornar la última medición del bloque en formato columnar
@@ -1655,20 +1446,6 @@ func TestConsultarUltimoPunto_DesdeS3(t *testing.T) {
 	assert.Equal(t, int64(3000), resultado.Tiempos[0])
 	assert.Equal(t, int64(30), resultado.Valores[0])
 	t.Log("ConsultarUltimoPunto hace fallback a S3 correctamente")
-}
-
-// ============================================================================
-// TESTS DE NUEVO CLIENTE BORDE HTTP
-// ============================================================================
-
-// TestNuevoClienteBordeHTTP verifica creacion del cliente
-func TestNuevoClienteBordeHTTP(t *testing.T) {
-	cliente := nuevoClienteBordeHTTP()
-
-	assert.NotNil(t, cliente)
-	assert.NotNil(t, cliente.httpClient)
-	assert.Equal(t, 10*time.Second, cliente.httpClient.Timeout)
-	t.Log("nuevoClienteBordeHTTP crea cliente correctamente")
 }
 
 // ============================================================================
@@ -1700,9 +1477,8 @@ func TestCargarNodosDesdeS3_SinNodos(t *testing.T) {
 func TestCargarNodosDesdeS3_ConNodos(t *testing.T) {
 	// Crear JSON de nodo de prueba
 	nodo := tipos.Nodo{
-		NodoID:     "nodo-test",
-		Direccion:  "192.168.1.100",
-		PuertoHTTP: "8080",
+		NodoID:    "nodo-test",
+		Direccion: "192.168.1.100",
 		Series: map[string]tipos.Serie{
 			"/sensores/temp": {SerieId: 1, Path: "/sensores/temp"},
 		},
@@ -1878,7 +1654,7 @@ func TestCrear_ConClienteS3Inyectado(t *testing.T) {
 // TestCrear_BucketNoExiste_SeCreaNuevo verifica creacion de bucket
 func TestCrear_BucketNoExiste_SeCreaNuevo(t *testing.T) {
 	mockS3 := &mockClienteS3{
-		headBucketErr:      assert.AnError, // Bucket no existe
+		headBucketErr:      &s3types.NotFound{},
 		createBucketOutput: &s3.CreateBucketOutput{},
 		listObjectsOutput: &s3.ListObjectsV2Output{
 			Contents: []s3types.Object{},
@@ -1910,7 +1686,7 @@ func TestCrear_BucketNoExiste_SeCreaNuevo(t *testing.T) {
 // TestCrear_ErrorCreandoBucket verifica error al crear bucket
 func TestCrear_ErrorCreandoBucket(t *testing.T) {
 	mockS3 := &mockClienteS3{
-		headBucketErr:   assert.AnError, // Bucket no existe
+		headBucketErr:   &s3types.NotFound{},
 		createBucketErr: assert.AnError, // Error al crearlo
 	}
 
@@ -1957,9 +1733,8 @@ func TestCrear_SinClienteS3_ConfigInvalida(t *testing.T) {
 // TestCrear_ConNodosExistentes verifica carga de nodos al crear
 func TestCrear_ConNodosExistentes(t *testing.T) {
 	nodo := tipos.Nodo{
-		NodoID:     "nodo-existente",
-		Direccion:  "10.0.0.1",
-		PuertoHTTP: "9000",
+		NodoID:    "nodo-existente",
+		Direccion: "10.0.0.1",
 	}
 	nodoJSON, _ := json.Marshal(nodo)
 
@@ -1997,41 +1772,6 @@ func TestCrear_ConNodosExistentes(t *testing.T) {
 	t.Log("Crear carga nodos existentes desde S3")
 }
 
-// TestCrear_SinClienteBorde_UsaHTTP verifica que crea cliente HTTP por defecto
-func TestCrear_SinClienteBorde_UsaHTTP(t *testing.T) {
-	mockS3 := &mockClienteS3{
-		headBucketOutput: &s3.HeadBucketOutput{},
-		listObjectsOutput: &s3.ListObjectsV2Output{
-			Contents: []s3types.Object{},
-		},
-	}
-
-	opts := opcionesInternas{
-		Opciones: Opciones{
-			ConfigS3: tipos.ConfiguracionS3{
-				Endpoint:        "http://localhost:3900",
-				AccessKeyID:     "test-key",
-				SecretAccessKey: "test-secret",
-				Bucket:          "test-bucket",
-			},
-		},
-		clienteS3:    mockS3,
-		clienteBorde: nil, // No inyectado
-	}
-
-	gestor, err := crearConOpciones(opts)
-
-	assert.NoError(t, err)
-	assert.NotNil(t, gestor)
-	assert.NotNil(t, gestor.clienteBorde)
-	// Verificar que es del tipo clienteBordeHTTP
-	_, ok := gestor.clienteBorde.(*clienteBordeHTTP)
-	assert.True(t, ok, "Debe crear clienteBordeHTTP por defecto")
-
-	gestor.Cerrar()
-	t.Log("Crear usa clienteBordeHTTP por defecto")
-}
-
 // ============================================================================
 // TESTS DE CONSULTAR AGREGACION
 // ============================================================================
@@ -2042,7 +1782,7 @@ func TestConsultarAgregacion_SerieNoEncontrada(t *testing.T) {
 		nodos: make(map[string]*tipos.Nodo),
 	}
 
-	_, err := m.ConsultarAgregacion("/sensores/noexiste", time.Now().Add(-1*time.Hour), time.Now(), []tipos.TipoAgregacion{tipos.AgregacionPromedio})
+	_, err := m.ConsultarAgregacion(t.Context(), "/sensores/noexiste", time.Now().Add(-1*time.Hour), time.Now(), []tipos.TipoAgregacion{tipos.AgregacionPromedio})
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no encontrada")
@@ -2070,9 +1810,8 @@ func TestConsultarAgregacion_Promedio(t *testing.T) {
 	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
-				NodoID:     "nodo1",
-				Direccion:  "192.168.1.100",
-				PuertoHTTP: "8080",
+				NodoID:    "nodo1",
+				Direccion: "192.168.1.100",
 				Series: map[string]tipos.Serie{
 					"/sensores/temp": {SerieId: 1, Path: "/sensores/temp"},
 				},
@@ -2086,7 +1825,7 @@ func TestConsultarAgregacion_Promedio(t *testing.T) {
 	inicio := time.Unix(0, 500)
 	fin := time.Unix(0, 3500)
 
-	resultado, err := m.ConsultarAgregacion("/sensores/temp", inicio, fin, []tipos.TipoAgregacion{tipos.AgregacionPromedio})
+	resultado, err := m.ConsultarAgregacion(t.Context(), "/sensores/temp", inicio, fin, []tipos.TipoAgregacion{tipos.AgregacionPromedio})
 
 	assert.NoError(t, err)
 	require.Len(t, resultado.Series, 1)
@@ -2116,9 +1855,8 @@ func TestConsultarAgregacion_Maximo(t *testing.T) {
 	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
-				NodoID:     "nodo1",
-				Direccion:  "192.168.1.100",
-				PuertoHTTP: "8080",
+				NodoID:    "nodo1",
+				Direccion: "192.168.1.100",
 				Series: map[string]tipos.Serie{
 					"/sensores/temp": {SerieId: 1, Path: "/sensores/temp"},
 				},
@@ -2132,7 +1870,7 @@ func TestConsultarAgregacion_Maximo(t *testing.T) {
 	inicio := time.Unix(0, 500)
 	fin := time.Unix(0, 3500)
 
-	resultado, err := m.ConsultarAgregacion("/sensores/temp", inicio, fin, []tipos.TipoAgregacion{tipos.AgregacionMaximo})
+	resultado, err := m.ConsultarAgregacion(t.Context(), "/sensores/temp", inicio, fin, []tipos.TipoAgregacion{tipos.AgregacionMaximo})
 
 	assert.NoError(t, err)
 	require.Len(t, resultado.Series, 1)
@@ -2161,9 +1899,8 @@ func TestConsultarAgregacion_Minimo(t *testing.T) {
 	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
-				NodoID:     "nodo1",
-				Direccion:  "192.168.1.100",
-				PuertoHTTP: "8080",
+				NodoID:    "nodo1",
+				Direccion: "192.168.1.100",
 				Series: map[string]tipos.Serie{
 					"/sensores/temp": {SerieId: 1, Path: "/sensores/temp"},
 				},
@@ -2177,7 +1914,7 @@ func TestConsultarAgregacion_Minimo(t *testing.T) {
 	inicio := time.Unix(0, 500)
 	fin := time.Unix(0, 3500)
 
-	resultado, err := m.ConsultarAgregacion("/sensores/temp", inicio, fin, []tipos.TipoAgregacion{tipos.AgregacionMinimo})
+	resultado, err := m.ConsultarAgregacion(t.Context(), "/sensores/temp", inicio, fin, []tipos.TipoAgregacion{tipos.AgregacionMinimo})
 
 	assert.NoError(t, err)
 	require.Len(t, resultado.Series, 1)
@@ -2206,9 +1943,8 @@ func TestConsultarAgregacion_Suma(t *testing.T) {
 	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
-				NodoID:     "nodo1",
-				Direccion:  "192.168.1.100",
-				PuertoHTTP: "8080",
+				NodoID:    "nodo1",
+				Direccion: "192.168.1.100",
 				Series: map[string]tipos.Serie{
 					"/sensores/temp": {SerieId: 1, Path: "/sensores/temp"},
 				},
@@ -2222,7 +1958,7 @@ func TestConsultarAgregacion_Suma(t *testing.T) {
 	inicio := time.Unix(0, 500)
 	fin := time.Unix(0, 3500)
 
-	resultado, err := m.ConsultarAgregacion("/sensores/temp", inicio, fin, []tipos.TipoAgregacion{tipos.AgregacionSuma})
+	resultado, err := m.ConsultarAgregacion(t.Context(), "/sensores/temp", inicio, fin, []tipos.TipoAgregacion{tipos.AgregacionSuma})
 
 	assert.NoError(t, err)
 	require.Len(t, resultado.Series, 1)
@@ -2251,9 +1987,8 @@ func TestConsultarAgregacion_Count(t *testing.T) {
 	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
-				NodoID:     "nodo1",
-				Direccion:  "192.168.1.100",
-				PuertoHTTP: "8080",
+				NodoID:    "nodo1",
+				Direccion: "192.168.1.100",
 				Series: map[string]tipos.Serie{
 					"/sensores/temp": {SerieId: 1, Path: "/sensores/temp"},
 				},
@@ -2267,7 +2002,7 @@ func TestConsultarAgregacion_Count(t *testing.T) {
 	inicio := time.Unix(0, 500)
 	fin := time.Unix(0, 3500)
 
-	resultado, err := m.ConsultarAgregacion("/sensores/temp", inicio, fin, []tipos.TipoAgregacion{tipos.AgregacionConteo})
+	resultado, err := m.ConsultarAgregacion(t.Context(), "/sensores/temp", inicio, fin, []tipos.TipoAgregacion{tipos.AgregacionConteo})
 
 	assert.NoError(t, err)
 	require.Len(t, resultado.Series, 1)
@@ -2290,9 +2025,8 @@ func TestConsultarAgregacion_SinDatos(t *testing.T) {
 	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
-				NodoID:     "nodo1",
-				Direccion:  "192.168.1.100",
-				PuertoHTTP: "8080",
+				NodoID:    "nodo1",
+				Direccion: "192.168.1.100",
 				Series: map[string]tipos.Serie{
 					"/sensores/temp": {SerieId: 1, Path: "/sensores/temp"},
 				},
@@ -2306,7 +2040,7 @@ func TestConsultarAgregacion_SinDatos(t *testing.T) {
 	inicio := time.Unix(0, 500)
 	fin := time.Unix(0, 3500)
 
-	_, err := m.ConsultarAgregacion("/sensores/temp", inicio, fin, []tipos.TipoAgregacion{tipos.AgregacionPromedio})
+	_, err := m.ConsultarAgregacion(t.Context(), "/sensores/temp", inicio, fin, []tipos.TipoAgregacion{tipos.AgregacionPromedio})
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no se encontraron datos")
@@ -2334,9 +2068,8 @@ func TestConsultarAgregacion_ConInt64(t *testing.T) {
 	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
-				NodoID:     "nodo1",
-				Direccion:  "192.168.1.100",
-				PuertoHTTP: "8080",
+				NodoID:    "nodo1",
+				Direccion: "192.168.1.100",
 				Series: map[string]tipos.Serie{
 					"/sensores/temp": {SerieId: 1, Path: "/sensores/temp"},
 				},
@@ -2350,7 +2083,7 @@ func TestConsultarAgregacion_ConInt64(t *testing.T) {
 	inicio := time.Unix(0, 500)
 	fin := time.Unix(0, 3500)
 
-	resultado, err := m.ConsultarAgregacion("/sensores/temp", inicio, fin, []tipos.TipoAgregacion{tipos.AgregacionPromedio})
+	resultado, err := m.ConsultarAgregacion(t.Context(), "/sensores/temp", inicio, fin, []tipos.TipoAgregacion{tipos.AgregacionPromedio})
 
 	assert.NoError(t, err)
 	require.Len(t, resultado.Series, 1)
@@ -2368,7 +2101,7 @@ func TestConsultarAgregacionTemporal_SerieNoEncontrada(t *testing.T) {
 		nodos: make(map[string]*tipos.Nodo),
 	}
 
-	_, err := m.ConsultarAgregacionTemporal("/sensores/noexiste", time.Now().Add(-1*time.Hour), time.Now(), []tipos.TipoAgregacion{tipos.AgregacionPromedio}, time.Minute)
+	_, err := m.ConsultarAgregacionTemporal(t.Context(), "/sensores/noexiste", time.Now().Add(-1*time.Hour), time.Now(), []tipos.TipoAgregacion{tipos.AgregacionPromedio}, time.Minute)
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no encontrada")
@@ -2388,7 +2121,7 @@ func TestConsultarAgregacionTemporal_IntervaloInvalido(t *testing.T) {
 		},
 	}
 
-	_, err := m.ConsultarAgregacionTemporal("/sensores/temp", time.Now().Add(-1*time.Hour), time.Now(), []tipos.TipoAgregacion{tipos.AgregacionPromedio}, 0)
+	_, err := m.ConsultarAgregacionTemporal(t.Context(), "/sensores/temp", time.Now().Add(-1*time.Hour), time.Now(), []tipos.TipoAgregacion{tipos.AgregacionPromedio}, 0)
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "intervalo debe ser mayor a cero")
@@ -2423,9 +2156,8 @@ func TestConsultarAgregacionTemporal_MultipleBuckets(t *testing.T) {
 	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
-				NodoID:     "nodo1",
-				Direccion:  "192.168.1.100",
-				PuertoHTTP: "8080",
+				NodoID:    "nodo1",
+				Direccion: "192.168.1.100",
 				Series: map[string]tipos.Serie{
 					"/sensores/temp": {SerieId: 1, Path: "/sensores/temp"},
 				},
@@ -2440,7 +2172,7 @@ func TestConsultarAgregacionTemporal_MultipleBuckets(t *testing.T) {
 	fin := time.Unix(0, 3000)
 	intervalo := time.Duration(1000) // 1000 nanosegundos
 
-	resultado, err := m.ConsultarAgregacionTemporal("/sensores/temp", inicio, fin, []tipos.TipoAgregacion{tipos.AgregacionPromedio}, intervalo)
+	resultado, err := m.ConsultarAgregacionTemporal(t.Context(), "/sensores/temp", inicio, fin, []tipos.TipoAgregacion{tipos.AgregacionPromedio}, intervalo)
 
 	assert.NoError(t, err)
 	assert.Len(t, resultado.Tiempos, 3)
@@ -2473,9 +2205,8 @@ func TestConsultarAgregacionTemporal_SinDatos(t *testing.T) {
 	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
-				NodoID:     "nodo1",
-				Direccion:  "192.168.1.100",
-				PuertoHTTP: "8080",
+				NodoID:    "nodo1",
+				Direccion: "192.168.1.100",
 				Series: map[string]tipos.Serie{
 					"/sensores/temp": {SerieId: 1, Path: "/sensores/temp"},
 				},
@@ -2489,7 +2220,7 @@ func TestConsultarAgregacionTemporal_SinDatos(t *testing.T) {
 	inicio := time.Unix(0, 0)
 	fin := time.Unix(0, 3000)
 
-	_, err := m.ConsultarAgregacionTemporal("/sensores/temp", inicio, fin, []tipos.TipoAgregacion{tipos.AgregacionPromedio}, time.Second)
+	_, err := m.ConsultarAgregacionTemporal(t.Context(), "/sensores/temp", inicio, fin, []tipos.TipoAgregacion{tipos.AgregacionPromedio}, time.Second)
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no se encontraron datos")
@@ -2518,9 +2249,8 @@ func TestConsultarAgregacionTemporal_OrdenCronologico(t *testing.T) {
 	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
-				NodoID:     "nodo1",
-				Direccion:  "192.168.1.100",
-				PuertoHTTP: "8080",
+				NodoID:    "nodo1",
+				Direccion: "192.168.1.100",
 				Series: map[string]tipos.Serie{
 					"/sensores/temp": {SerieId: 1, Path: "/sensores/temp"},
 				},
@@ -2535,7 +2265,7 @@ func TestConsultarAgregacionTemporal_OrdenCronologico(t *testing.T) {
 	fin := time.Unix(0, 3000)
 	intervalo := time.Duration(1000)
 
-	resultado, err := m.ConsultarAgregacionTemporal("/sensores/temp", inicio, fin, []tipos.TipoAgregacion{tipos.AgregacionPromedio}, intervalo)
+	resultado, err := m.ConsultarAgregacionTemporal(t.Context(), "/sensores/temp", inicio, fin, []tipos.TipoAgregacion{tipos.AgregacionPromedio}, intervalo)
 
 	assert.NoError(t, err)
 	assert.Len(t, resultado.Tiempos, 3)
@@ -2624,12 +2354,13 @@ func TestCoincidePath_MultipleWildcards(t *testing.T) {
 	t.Log("tipos.CoincidePath con multiples wildcards funciona correctamente")
 }
 
-// TestCoincidePath_DiferenteNivelProfundidad verifica que no coincida con diferente profundidad
+// TestCoincidePath_DiferenteNivelProfundidad verifica profundidad vs wildcard final
 func TestCoincidePath_DiferenteNivelProfundidad(t *testing.T) {
-	assert.False(t, tipos.CoincidePath("sensor_01/temp/interior", "sensor_01/*"))
+	// "*" al final del patrón matchea múltiples niveles (ver tipos.CoincidePath)
+	assert.True(t, tipos.CoincidePath("sensor_01/temp/interior", "sensor_01/*"))
 	assert.False(t, tipos.CoincidePath("sensor_01", "sensor_01/temp"))
 	assert.False(t, tipos.CoincidePath("a/b/c", "*/temp"))
-	t.Log("tipos.CoincidePath no coincide cuando la profundidad es diferente")
+	t.Log("tipos.CoincidePath: trailing * multi-nivel; otros desajustes de profundidad no coinciden")
 }
 
 // TestEsPatronWildcard verifica deteccion de wildcards
@@ -2647,9 +2378,8 @@ func TestBuscarSeriesPorPath_Wildcard_Encontradas(t *testing.T) {
 	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
-				NodoID:     "nodo1",
-				Direccion:  "192.168.1.1",
-				PuertoHTTP: "8080",
+				NodoID:    "nodo1",
+				Direccion: "192.168.1.1",
 				Series: map[string]tipos.Serie{
 					"sensor_01/temp":     {SerieId: 1, Path: "sensor_01/temp"},
 					"sensor_01/humidity": {SerieId: 2, Path: "sensor_01/humidity"},
@@ -2701,17 +2431,15 @@ func TestBuscarSeriesPorPath_Wildcard_MultiplesNodos(t *testing.T) {
 	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
-				NodoID:     "nodo1",
-				Direccion:  "192.168.1.1",
-				PuertoHTTP: "8080",
+				NodoID:    "nodo1",
+				Direccion: "192.168.1.1",
 				Series: map[string]tipos.Serie{
 					"sensor_01/temp": {SerieId: 1, Path: "sensor_01/temp"},
 				},
 			},
 			"nodo2": {
-				NodoID:     "nodo2",
-				Direccion:  "192.168.1.2",
-				PuertoHTTP: "8080",
+				NodoID:    "nodo2",
+				Direccion: "192.168.1.2",
 				Series: map[string]tipos.Serie{
 					"sensor_02/temp": {SerieId: 2, Path: "sensor_02/temp"},
 				},
@@ -2759,9 +2487,8 @@ func TestConsultarAgregacion_Wildcard_MultiplesSeries(t *testing.T) {
 	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
-				NodoID:     "nodo1",
-				Direccion:  "192.168.1.100",
-				PuertoHTTP: "8080",
+				NodoID:    "nodo1",
+				Direccion: "192.168.1.100",
 				Series: map[string]tipos.Serie{
 					"sensor_01/temp": {SerieId: 1, Path: "sensor_01/temp"},
 					"sensor_02/temp": {SerieId: 2, Path: "sensor_02/temp"},
@@ -2779,7 +2506,7 @@ func TestConsultarAgregacion_Wildcard_MultiplesSeries(t *testing.T) {
 	// Ahora columnar: cada serie tiene su propio promedio
 	// serie1: (10 + 20) / 2 = 15
 	// serie2: (15 + 25) / 2 = 20
-	resultado, err := m.ConsultarAgregacion("*/temp", inicio, fin, []tipos.TipoAgregacion{tipos.AgregacionPromedio})
+	resultado, err := m.ConsultarAgregacion(t.Context(), "*/temp", inicio, fin, []tipos.TipoAgregacion{tipos.AgregacionPromedio})
 
 	assert.NoError(t, err)
 	require.Len(t, resultado.Series, 2)
@@ -2807,7 +2534,7 @@ func TestConsultarAgregacion_Wildcard_SinCoincidencias(t *testing.T) {
 	inicio := time.Unix(0, 0)
 	fin := time.Unix(0, 1000)
 
-	_, err := m.ConsultarAgregacion("*/pressure", inicio, fin, []tipos.TipoAgregacion{tipos.AgregacionPromedio})
+	_, err := m.ConsultarAgregacion(t.Context(), "*/pressure", inicio, fin, []tipos.TipoAgregacion{tipos.AgregacionPromedio})
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no encontrada")
@@ -2836,9 +2563,8 @@ func TestConsultarAgregacion_Wildcard_Suma(t *testing.T) {
 	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
-				NodoID:     "nodo1",
-				Direccion:  "192.168.1.100",
-				PuertoHTTP: "8080",
+				NodoID:    "nodo1",
+				Direccion: "192.168.1.100",
 				Series: map[string]tipos.Serie{
 					"sensor_01/temp": {SerieId: 1, Path: "sensor_01/temp"},
 					"sensor_02/temp": {SerieId: 2, Path: "sensor_02/temp"},
@@ -2855,7 +2581,7 @@ func TestConsultarAgregacion_Wildcard_Suma(t *testing.T) {
 	fin := time.Unix(0, 2000)
 
 	// 3 series, cada una con valor 10 -> cada serie tiene suma = 10
-	resultado, err := m.ConsultarAgregacion("*/temp", inicio, fin, []tipos.TipoAgregacion{tipos.AgregacionSuma})
+	resultado, err := m.ConsultarAgregacion(t.Context(), "*/temp", inicio, fin, []tipos.TipoAgregacion{tipos.AgregacionSuma})
 
 	assert.NoError(t, err)
 	require.Len(t, resultado.Series, 3)
@@ -2888,9 +2614,8 @@ func TestConsultarAgregacion_Wildcard_Count(t *testing.T) {
 	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
-				NodoID:     "nodo1",
-				Direccion:  "192.168.1.100",
-				PuertoHTTP: "8080",
+				NodoID:    "nodo1",
+				Direccion: "192.168.1.100",
 				Series: map[string]tipos.Serie{
 					"sensor_01/temp": {SerieId: 1, Path: "sensor_01/temp"},
 					"sensor_02/temp": {SerieId: 2, Path: "sensor_02/temp"},
@@ -2906,7 +2631,7 @@ func TestConsultarAgregacion_Wildcard_Count(t *testing.T) {
 	fin := time.Unix(0, 3000)
 
 	// 2 series x 2 mediciones = cada serie tiene count = 2
-	resultado, err := m.ConsultarAgregacion("*/temp", inicio, fin, []tipos.TipoAgregacion{tipos.AgregacionConteo})
+	resultado, err := m.ConsultarAgregacion(t.Context(), "*/temp", inicio, fin, []tipos.TipoAgregacion{tipos.AgregacionConteo})
 
 	assert.NoError(t, err)
 	require.Len(t, resultado.Series, 2)
@@ -2940,9 +2665,8 @@ func TestConsultarAgregacionTemporal_Wildcard(t *testing.T) {
 	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
-				NodoID:     "nodo1",
-				Direccion:  "192.168.1.100",
-				PuertoHTTP: "8080",
+				NodoID:    "nodo1",
+				Direccion: "192.168.1.100",
 				Series: map[string]tipos.Serie{
 					"sensor_01/temp": {SerieId: 1, Path: "sensor_01/temp"},
 					"sensor_02/temp": {SerieId: 2, Path: "sensor_02/temp"},
@@ -2958,7 +2682,7 @@ func TestConsultarAgregacionTemporal_Wildcard(t *testing.T) {
 	fin := time.Unix(0, 1000)
 	intervalo := time.Duration(1000) // 1000ns = un solo bucket
 
-	resultado, err := m.ConsultarAgregacionTemporal("*/temp", inicio, fin, []tipos.TipoAgregacion{tipos.AgregacionPromedio}, intervalo)
+	resultado, err := m.ConsultarAgregacionTemporal(t.Context(), "*/temp", inicio, fin, []tipos.TipoAgregacion{tipos.AgregacionPromedio}, intervalo)
 
 	assert.NoError(t, err)
 	assert.Len(t, resultado.Tiempos, 1)
@@ -2987,7 +2711,7 @@ func TestConsultarAgregacionTemporal_Wildcard_SinCoincidencias(t *testing.T) {
 	inicio := time.Unix(0, 0)
 	fin := time.Unix(0, 1000)
 
-	_, err := m.ConsultarAgregacionTemporal("*/pressure", inicio, fin, []tipos.TipoAgregacion{tipos.AgregacionPromedio}, time.Second)
+	_, err := m.ConsultarAgregacionTemporal(t.Context(), "*/pressure", inicio, fin, []tipos.TipoAgregacion{tipos.AgregacionPromedio}, time.Second)
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no encontrada")
@@ -3016,9 +2740,8 @@ func TestConsultarAgregacionTemporal_Wildcard_MultipleBuckets(t *testing.T) {
 	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
-				NodoID:     "nodo1",
-				Direccion:  "192.168.1.100",
-				PuertoHTTP: "8080",
+				NodoID:    "nodo1",
+				Direccion: "192.168.1.100",
 				Series: map[string]tipos.Serie{
 					"sensor_01/temp": {SerieId: 1, Path: "sensor_01/temp"},
 					"sensor_02/temp": {SerieId: 2, Path: "sensor_02/temp"},
@@ -3034,7 +2757,7 @@ func TestConsultarAgregacionTemporal_Wildcard_MultipleBuckets(t *testing.T) {
 	fin := time.Unix(0, 2000)
 	intervalo := time.Duration(1000)
 
-	resultado, err := m.ConsultarAgregacionTemporal("*/temp", inicio, fin, []tipos.TipoAgregacion{tipos.AgregacionPromedio}, intervalo)
+	resultado, err := m.ConsultarAgregacionTemporal(t.Context(), "*/temp", inicio, fin, []tipos.TipoAgregacion{tipos.AgregacionPromedio}, intervalo)
 
 	assert.NoError(t, err)
 	assert.Len(t, resultado.Tiempos, 2)
@@ -3080,9 +2803,8 @@ func TestConsultarAgregacion_MultiplesAgregaciones_MinMax(t *testing.T) {
 	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
-				NodoID:     "nodo1",
-				Direccion:  "192.168.1.100",
-				PuertoHTTP: "8080",
+				NodoID:    "nodo1",
+				Direccion: "192.168.1.100",
 				Series: map[string]tipos.Serie{
 					"/sensores/temp": {SerieId: 1, Path: "/sensores/temp"},
 				},
@@ -3093,7 +2815,7 @@ func TestConsultarAgregacion_MultiplesAgregaciones_MinMax(t *testing.T) {
 		config:       tipos.ConfiguracionS3{Bucket: "test-bucket"},
 	}
 
-	resultado, err := m.ConsultarAgregacion(
+	resultado, err := m.ConsultarAgregacion(t.Context(),
 		"/sensores/temp",
 		inicio, fin,
 		[]tipos.TipoAgregacion{tipos.AgregacionMinimo, tipos.AgregacionMaximo},
@@ -3134,9 +2856,8 @@ func TestConsultarAgregacion_MultiplesAgregaciones_TodasLasAgregaciones(t *testi
 	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
-				NodoID:     "nodo1",
-				Direccion:  "192.168.1.100",
-				PuertoHTTP: "8080",
+				NodoID:    "nodo1",
+				Direccion: "192.168.1.100",
 				Series: map[string]tipos.Serie{
 					"/sensores/temp": {SerieId: 1, Path: "/sensores/temp"},
 				},
@@ -3147,7 +2868,7 @@ func TestConsultarAgregacion_MultiplesAgregaciones_TodasLasAgregaciones(t *testi
 		config:       tipos.ConfiguracionS3{Bucket: "test-bucket"},
 	}
 
-	resultado, err := m.ConsultarAgregacion(
+	resultado, err := m.ConsultarAgregacion(t.Context(),
 		"/sensores/temp",
 		inicio, fin,
 		[]tipos.TipoAgregacion{
@@ -3182,7 +2903,7 @@ func TestConsultarAgregacion_MultiplesAgregaciones_SinAgregaciones(t *testing.T)
 		},
 	}
 
-	_, err := m.ConsultarAgregacion(
+	_, err := m.ConsultarAgregacion(t.Context(),
 		"/sensores/temp",
 		time.Now().Add(-1*time.Hour),
 		time.Now(),
@@ -3228,9 +2949,8 @@ func TestConsultarAgregacion_MultiplesAgregaciones_Wildcard(t *testing.T) {
 	m := &GestorDespachador{
 		nodos: map[string]*tipos.Nodo{
 			"nodo1": {
-				NodoID:     "nodo1",
-				Direccion:  "192.168.1.100",
-				PuertoHTTP: "8080",
+				NodoID:    "nodo1",
+				Direccion: "192.168.1.100",
 				Series: map[string]tipos.Serie{
 					"sensor_01/temp": {SerieId: 1, Path: "sensor_01/temp"},
 					"sensor_02/temp": {SerieId: 2, Path: "sensor_02/temp"},
@@ -3242,7 +2962,7 @@ func TestConsultarAgregacion_MultiplesAgregaciones_Wildcard(t *testing.T) {
 		config:       tipos.ConfiguracionS3{Bucket: "test-bucket"},
 	}
 
-	resultado, err := m.ConsultarAgregacion(
+	resultado, err := m.ConsultarAgregacion(t.Context(),
 		"*/temp",
 		inicio, fin,
 		[]tipos.TipoAgregacion{tipos.AgregacionMinimo, tipos.AgregacionMaximo},

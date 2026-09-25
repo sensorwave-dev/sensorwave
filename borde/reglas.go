@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cockroachdb/pebble"
+	"github.com/sensorwave-dev/sensorwave/almacen"
 	"github.com/sensorwave-dev/sensorwave/tipos"
 )
 
@@ -24,7 +24,7 @@ const (
 )
 
 // Alias para mantener compatibilidad con código existente en reglas
-// Los tipos canónicos están en tipos/agregacion.go
+// Los tipos canónicos están en tipos/consultas.go
 type TipoAgregacion = tipos.TipoAgregacion
 
 const (
@@ -96,8 +96,8 @@ type MotorReglas struct {
 	ejecutores map[string]EjecutorAccion
 	habilitado bool
 	mu         sync.RWMutex
-	gestor     *GestorBorde // Referencia al gestor padre (para acceso a datos)
-	db         *pebble.DB   // Conexión a PebbleDB para persistencia de reglas
+	gestor     *GestorBorde  // Referencia al gestor padre (para acceso a datos)
+	db         almacen.Motor // Persistencia de reglas
 }
 
 // EstadoMotorReglas contiene información sobre el estado actual del motor de reglas
@@ -126,7 +126,7 @@ func (mr *MotorReglas) ObtenerEstado() EstadoMotorReglas {
 	}
 }
 
-func nuevoMotorReglasIntegrado(gestor *GestorBorde, db *pebble.DB) *MotorReglas {
+func nuevoMotorReglasIntegrado(gestor *GestorBorde, db almacen.Motor) *MotorReglas {
 	motor := &MotorReglas{
 		reglas:     make(map[string]*Regla),
 		ejecutores: make(map[string]EjecutorAccion),
@@ -156,20 +156,26 @@ func (mr *MotorReglas) evaluarReglas(timestamp time.Time) error {
 	}
 
 	mr.mu.RLock()
-	defer mr.mu.RUnlock()
-
+	activas := make([]Regla, 0, len(mr.reglas))
 	for _, regla := range mr.reglas {
-		if !regla.Activa {
-			continue
+		if regla.Activa {
+			activas = append(activas, *regla)
 		}
+	}
+	mr.mu.RUnlock()
 
+	for i := range activas {
+		regla := &activas[i]
 		if mr.evaluarCondicionesRegla(regla, timestamp) {
 			if err := mr.ejecutarAcciones(regla, timestamp); err != nil {
 				log.Printf("Error ejecutando acciones de regla '%s': %v", regla.ID, err)
 			}
 		}
-
-		regla.UltimaEval = timestamp
+		mr.mu.Lock()
+		if actual, ok := mr.reglas[regla.ID]; ok {
+			actual.UltimaEval = timestamp
+		}
+		mr.mu.Unlock()
 	}
 
 	return nil
@@ -733,10 +739,7 @@ func (mr *MotorReglas) cargarReglasExistentes() error {
 		return nil
 	}
 
-	iter, err := mr.db.NewIter(&pebble.IterOptions{
-		LowerBound: []byte("reglas/"),
-		UpperBound: []byte("reglas0"),
-	})
+	iter, err := mr.db.Recorrer([]byte("reglas/"), []byte("reglas0"))
 	if err != nil {
 		return err
 	}
@@ -770,7 +773,7 @@ func (mr *MotorReglas) AgregarRegla(regla *Regla) error {
 			return fmt.Errorf("error al serializar regla: %v", err)
 		}
 
-		err = mr.db.Set(clave, reglaBytes, pebble.Sync)
+		err = mr.db.Poner(clave, reglaBytes)
 		if err != nil {
 			return fmt.Errorf("error al guardar regla: %v", err)
 		}
@@ -783,21 +786,13 @@ func (mr *MotorReglas) AgregarRegla(regla *Regla) error {
 
 	log.Printf("Regla '%s' agregada exitosamente", regla.ID)
 
-	// Actualizar S3 (best-effort, igual que CrearSerie)
-	if mr.gestor != nil && clienteS3 != nil {
-		if err := mr.gestor.registrarEnS3(); err != nil {
-			log.Printf("Error registrando regla nueva en S3: %v", err)
-			// No retornar error - la regla ya fue guardada localmente
-		}
-	}
-
 	return nil
 }
 
 func (mr *MotorReglas) EliminarRegla(id string) error {
 	if mr.db != nil {
 		clave := generarClaveRegla(id)
-		err := mr.db.Delete(clave, pebble.Sync)
+		err := mr.db.Borrar(clave)
 		if err != nil {
 			return fmt.Errorf("error al eliminar regla de DB: %v", err)
 		}
@@ -808,13 +803,6 @@ func (mr *MotorReglas) EliminarRegla(id string) error {
 	}
 
 	log.Printf("Regla '%s' eliminada", id)
-
-	// Actualizar S3 (best-effort)
-	if mr.gestor != nil && clienteS3 != nil {
-		if err := mr.gestor.registrarEnS3(); err != nil {
-			log.Printf("Error registrando eliminación de regla en S3: %v", err)
-		}
-	}
 
 	return nil
 }
@@ -835,7 +823,7 @@ func (mr *MotorReglas) ActualizarRegla(regla *Regla) error {
 			return fmt.Errorf("error al serializar regla: %v", err)
 		}
 
-		err = mr.db.Set(clave, reglaBytes, pebble.Sync)
+		err = mr.db.Poner(clave, reglaBytes)
 		if err != nil {
 			return fmt.Errorf("error al actualizar regla en DB: %v", err)
 		}
@@ -846,13 +834,6 @@ func (mr *MotorReglas) ActualizarRegla(regla *Regla) error {
 	}
 
 	log.Printf("Regla '%s' actualizada", regla.ID)
-
-	// Actualizar S3 (best-effort)
-	if mr.gestor != nil && clienteS3 != nil {
-		if err := mr.gestor.registrarEnS3(); err != nil {
-			log.Printf("Error registrando regla actualizada en S3: %v", err)
-		}
-	}
 
 	return nil
 }
@@ -879,7 +860,7 @@ func (mr *MotorReglas) HabilitarRegla(id string, habilitada bool) error {
 			return fmt.Errorf("error al serializar regla: %v", err)
 		}
 
-		err = mr.db.Set(clave, reglaBytes, pebble.Sync)
+		err = mr.db.Poner(clave, reglaBytes)
 		if err != nil {
 			// Revertir el cambio en memoria en caso de error
 			regla.Activa = !habilitada
@@ -892,13 +873,6 @@ func (mr *MotorReglas) HabilitarRegla(id string, habilitada bool) error {
 		estado = "deshabilitada"
 	}
 	log.Printf("Regla '%s' %s", id, estado)
-
-	// Actualizar S3 (best-effort)
-	if mr.gestor != nil && clienteS3 != nil {
-		if err := mr.gestor.registrarEnS3(); err != nil {
-			log.Printf("Error registrando cambio de estado de regla en S3: %v", err)
-		}
-	}
 
 	return nil
 }

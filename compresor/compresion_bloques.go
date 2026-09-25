@@ -21,7 +21,7 @@ func ObtenerCompresorBloque(tipo tipos.TipoCompresionBloque) CompresorBloque {
 		return &CompresorSnappy{}
 	case tipos.Gzip:
 		return &CompresorGzip{}
-	case tipos.Ninguna:
+	case tipos.SinCompresionBloque:
 		return &CompresorBloqueNinguno{}
 	default:
 		return &CompresorBloqueNinguno{}

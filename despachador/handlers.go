@@ -1,12 +1,22 @@
 package despachador
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/sensorwave-dev/sensorwave/tipos"
 )
+
+func responderErrorConsulta(w http.ResponseWriter, err error) {
+	if errors.Is(err, context.Canceled) {
+		// El cliente abortó; no hace falta (ni suele ser posible) responder.
+		return
+	}
+	tipos.EnviarError(w, http.StatusInternalServerError, err.Error())
+}
 
 // FloatNulo es un alias para tipos.FloatNulo para uso en este paquete
 type FloatNulo = tipos.FloatNulo
@@ -96,9 +106,9 @@ func HandlerConsultarRango(gestor *GestorDespachador) http.HandlerFunc {
 		tiempoInicio := time.Unix(0, req.TiempoInicio)
 		tiempoFin := time.Unix(0, req.TiempoFin)
 
-		resultado, err := gestor.ConsultarRango(req.Serie, tiempoInicio, tiempoFin)
+		resultado, err := gestor.ConsultarRango(r.Context(), req.Serie, tiempoInicio, tiempoFin)
 		if err != nil {
-			tipos.EnviarError(w, http.StatusInternalServerError, err.Error())
+			responderErrorConsulta(w, err)
 			return
 		}
 
@@ -139,9 +149,9 @@ func HandlerConsultarUltimo(gestor *GestorDespachador) http.HandlerFunc {
 			tiempoFin = &t
 		}
 
-		resultado, err := gestor.ConsultarUltimoPunto(req.Serie, tiempoInicio, tiempoFin)
+		resultado, err := gestor.ConsultarUltimoPunto(r.Context(), req.Serie, tiempoInicio, tiempoFin)
 		if err != nil {
-			tipos.EnviarError(w, http.StatusInternalServerError, err.Error())
+			responderErrorConsulta(w, err)
 			return
 		}
 
@@ -185,9 +195,9 @@ func HandlerConsultarAgregacion(gestor *GestorDespachador) http.HandlerFunc {
 		tiempoInicio := time.Unix(0, req.TiempoInicio)
 		tiempoFin := time.Unix(0, req.TiempoFin)
 
-		resultado, err := gestor.ConsultarAgregacion(req.Serie, tiempoInicio, tiempoFin, agregaciones)
+		resultado, err := gestor.ConsultarAgregacion(r.Context(), req.Serie, tiempoInicio, tiempoFin, agregaciones)
 		if err != nil {
-			tipos.EnviarError(w, http.StatusInternalServerError, err.Error())
+			responderErrorConsulta(w, err)
 			return
 		}
 
@@ -242,9 +252,9 @@ func HandlerConsultarAgregacionTemporal(gestor *GestorDespachador) http.HandlerF
 		tiempoFin := time.Unix(0, req.TiempoFin)
 		intervalo := time.Duration(req.Intervalo)
 
-		resultado, err := gestor.ConsultarAgregacionTemporal(req.Serie, tiempoInicio, tiempoFin, agregaciones, intervalo)
+		resultado, err := gestor.ConsultarAgregacionTemporal(r.Context(), req.Serie, tiempoInicio, tiempoFin, agregaciones, intervalo)
 		if err != nil {
-			tipos.EnviarError(w, http.StatusInternalServerError, err.Error())
+			responderErrorConsulta(w, err)
 			return
 		}
 

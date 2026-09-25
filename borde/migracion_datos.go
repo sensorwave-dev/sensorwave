@@ -11,7 +11,6 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/cockroachdb/pebble"
 	"github.com/sensorwave-dev/sensorwave/tipos"
 )
 
@@ -36,6 +35,9 @@ func (me *GestorBorde) configurarS3(cfg tipos.ConfiguracionS3) error {
 	_, err = clienteS3.HeadBucket(ctx, &s3.HeadBucketInput{
 		Bucket: aws.String(cfg.Bucket),
 	})
+	if err != nil && !tipos.BucketNoExiste(err) {
+		return fmt.Errorf("error al verificar bucket: %v", err)
+	}
 	if err != nil {
 		log.Printf("El bucket %s no existe, intentando crearlo...", cfg.Bucket)
 		_, err = clienteS3.CreateBucket(ctx, &s3.CreateBucketInput{
@@ -51,9 +53,9 @@ func (me *GestorBorde) configurarS3(cfg tipos.ConfiguracionS3) error {
 	return nil
 }
 
-// MigrarPorTiempoAlmacenamiento migra bloques de datos que excedan el tiempo de almacenamiento configurado
+// migrarPorTiempoAlmacenamiento migra bloques de datos que excedan el tiempo de almacenamiento configurado
 // para cada serie. Solo migra series que tengan TiempoAlmacenamiento > 0.
-func (me *GestorBorde) MigrarPorTiempoAlmacenamiento() error {
+func (me *GestorBorde) migrarPorTiempoAlmacenamiento() error {
 	// Verificar que S3 esté configurado
 	if clienteS3 == nil {
 		return fmt.Errorf("S3 no está configurado")
@@ -88,10 +90,7 @@ func (me *GestorBorde) MigrarPorTiempoAlmacenamiento() error {
 		// Construir prefijo para buscar bloques de esta serie
 		prefijo := fmt.Sprintf("datos/%010d/", serie.SerieId)
 
-		iter, err := me.db.NewIter(&pebble.IterOptions{
-			LowerBound: []byte(prefijo),
-			UpperBound: []byte(prefijo[:len(prefijo)-1] + "0"), // Incrementar último caracter
-		})
+		iter, err := me.db.Recorrer([]byte(prefijo), []byte(prefijo[:len(prefijo)-1]+"0"))
 		if err != nil {
 			log.Printf("Error creando iterador para serie %s: %v", serie.Path, err)
 			continue
@@ -151,7 +150,7 @@ func (me *GestorBorde) MigrarPorTiempoAlmacenamiento() error {
 			contadorMigrados++
 
 			// Eliminar de PebbleDB después de migrar exitosamente
-			err = me.db.Delete(clave, pebble.Sync)
+			err = me.db.Borrar(clave)
 			if err != nil {
 				log.Printf("Error eliminando bloque migrado de PebbleDB: %v", err)
 				continue
@@ -221,32 +220,54 @@ func parsearClaveLocalDatos(clave string) (serieId int, tiempoInicio, tiempoFin 
 	return int(serieId64), tiempoInicio, tiempoFin, nil
 }
 
-// IniciarMigracionAutomatica inicia un goroutine que ejecuta la migración por tiempo
-// de almacenamiento periódicamente según el intervalo especificado.
-func (me *GestorBorde) IniciarMigracionAutomatica(intervalo time.Duration) {
+// iniciarCicloS3 arranca el único ciclo de S3 cuando Crear dejó un cliente.
+// Registra el nodo al entrar y después en cada vuelta, junto con los borrados
+// pendientes y la migración de bloques. Se detiene al cerrar el gestor.
+func (me *GestorBorde) iniciarCicloS3() {
+	me.fondo.Add(1)
 	go func() {
-		ticker := time.NewTicker(intervalo)
+		defer me.fondo.Done()
+		me.ejecutarCicloS3()
+
+		ticker := time.NewTicker(me.intervaloS3)
 		defer ticker.Stop()
 
 		for {
 			select {
 			case <-me.finalizado:
-				log.Printf("Deteniendo migración automática")
+				log.Printf("Deteniendo ciclo de S3")
 				return
 			case <-ticker.C:
-				if clienteS3 == nil {
-					continue // S3 no configurado, saltar
-				}
-
-				err := me.MigrarPorTiempoAlmacenamiento()
-				if err != nil {
-					log.Printf("Error en migración automática: %v", err)
-				}
+				me.ejecutarCicloS3()
 			}
 		}
 	}()
 
-	log.Printf("Migración automática iniciada (intervalo: %v)", intervalo)
+	log.Printf("Ciclo de S3 iniciado (intervalo: %v)", me.intervaloS3)
+}
+
+// ejecutarCicloS3 registra el nodo, procesa borrados pendientes y migra bloques.
+// El registro se repite en cada vuelta: si el anterior no llegó, el siguiente lo crea.
+func (me *GestorBorde) ejecutarCicloS3() {
+	select {
+	case <-me.finalizado:
+		return
+	default:
+	}
+
+	if clienteS3 == nil {
+		return
+	}
+
+	if err := me.registrarEnS3(); err != nil {
+		log.Printf("Advertencia: error registrando nodo en S3: %v", err)
+	}
+	if err := me.procesarEliminacionesPendientes(); err != nil {
+		log.Printf("Error procesando eliminaciones pendientes de S3: %v", err)
+	}
+	if err := me.migrarPorTiempoAlmacenamiento(); err != nil {
+		log.Printf("Error en migración automática: %v", err)
+	}
 }
 
 // ============================================================================
@@ -281,7 +302,7 @@ func (me *GestorBorde) guardarEliminacionPendiente(serieId int, path string) err
 	}
 
 	clave := generarClaveEliminacionPendiente(serieId)
-	err = me.db.Set(clave, datos, pebble.Sync)
+	err = me.db.Poner(clave, datos)
 	if err != nil {
 		return fmt.Errorf("error guardando eliminación pendiente: %v", err)
 	}
@@ -294,10 +315,7 @@ func (me *GestorBorde) guardarEliminacionPendiente(serieId int, path string) err
 func (me *GestorBorde) cargarEliminacionesPendientes() ([]EliminacionPendiente, error) {
 	var pendientes []EliminacionPendiente
 
-	iter, err := me.db.NewIter(&pebble.IterOptions{
-		LowerBound: []byte("pendientes/eliminar/"),
-		UpperBound: []byte("pendientes/eliminar0"), // Rango que incluye todas las claves
-	})
+	iter, err := me.db.Recorrer([]byte("pendientes/eliminar/"), []byte("pendientes/eliminar0"))
 	if err != nil {
 		return nil, fmt.Errorf("error creando iterador para pendientes: %v", err)
 	}
@@ -327,13 +345,13 @@ func (me *GestorBorde) actualizarEliminacionPendiente(pendiente EliminacionPendi
 	}
 
 	clave := generarClaveEliminacionPendiente(pendiente.SerieId)
-	return me.db.Set(clave, datos, pebble.Sync)
+	return me.db.Poner(clave, datos)
 }
 
 // eliminarPendienteCompletado elimina una eliminación pendiente de PebbleDB (cuando se completó)
 func (me *GestorBorde) eliminarPendienteCompletado(serieId int) error {
 	clave := generarClaveEliminacionPendiente(serieId)
-	return me.db.Delete(clave, pebble.Sync)
+	return me.db.Borrar(clave)
 }
 
 // eliminarSerieDeS3 elimina todos los objetos de una serie en S3
@@ -393,8 +411,8 @@ func (me *GestorBorde) eliminarSerieDeS3(serieId int) (int, error) {
 	return objetosEliminados, nil
 }
 
-// procesarEliminacionesPendientes procesa todas las eliminaciones pendientes de S3
-// Intenta eliminar los datos de cada serie en S3 y actualiza el registro del nodo
+// procesarEliminacionesPendientes procesa todas las eliminaciones pendientes de S3.
+// El registro del nodo lo hace ejecutarCicloS3, no esta función.
 func (me *GestorBorde) procesarEliminacionesPendientes() error {
 	// Verificar si el gestor está cerrando
 	select {
@@ -445,40 +463,6 @@ func (me *GestorBorde) procesarEliminacionesPendientes() error {
 		}
 	}
 
-	// Actualizar registro del nodo en S3 si hubo eliminaciones exitosas
-	if exitosos > 0 {
-		if err := me.registrarEnS3(); err != nil {
-			log.Printf("Advertencia: error actualizando registro del nodo en S3: %v", err)
-		}
-	}
-
 	log.Printf("Eliminaciones pendientes procesadas: %d exitosas, %d fallidas", exitosos, fallidos)
 	return nil
-}
-
-// iniciarLimpiezaS3Automatica inicia un goroutine que procesa eliminaciones pendientes
-// cada 5 minutos (mismo intervalo que limpieza de reglas)
-func (me *GestorBorde) iniciarLimpiezaS3Automatica() {
-	go func() {
-		ticker := time.NewTicker(5 * time.Minute)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-me.finalizado:
-				log.Printf("Deteniendo limpieza automática de S3")
-				return
-			case <-ticker.C:
-				if clienteS3 == nil {
-					continue // S3 no configurado, saltar
-				}
-
-				if err := me.procesarEliminacionesPendientes(); err != nil {
-					log.Printf("Error en limpieza automática de S3: %v", err)
-				}
-			}
-		}
-	}()
-
-	log.Printf("Limpieza automática de S3 iniciada (intervalo: 5 minutos)")
 }

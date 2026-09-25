@@ -18,13 +18,14 @@ import (
 )
 
 type GestorDespachador struct {
-	nodos          map[string]*tipos.Nodo
-	mu             sync.RWMutex
-	s3             tipos.ClienteS3
-	config         tipos.ConfiguracionS3
-	finalizado     chan struct{}
-	clienteBorde   clienteBorde
-	timeoutBorde   time.Duration
+	nodos        map[string]*tipos.Nodo
+	mu           sync.RWMutex
+	s3           tipos.ClienteS3
+	config       tipos.ConfiguracionS3
+	finalizado   chan struct{}
+	clienteBorde clienteBorde
+	timeoutBorde time.Duration
+	cierre       sync.Once
 }
 
 // timeoutBordeEfectivo retorna el timeout configurado o 5s por defecto.
@@ -96,6 +97,9 @@ func crearConOpciones(opts opcionesInternas) (*GestorDespachador, error) {
 	_, err := s3Client.HeadBucket(ctx, &s3.HeadBucketInput{
 		Bucket: aws.String(cfg.Bucket),
 	})
+	if err != nil && !tipos.BucketNoExiste(err) {
+		return nil, fmt.Errorf("error al verificar bucket: %w", err)
+	}
 	if err != nil {
 		log.Printf("El bucket %s no existe, intentando crearlo...", cfg.Bucket)
 		_, err = s3Client.CreateBucket(ctx, &s3.CreateBucketInput{
@@ -146,10 +150,14 @@ func crearConOpciones(opts opcionesInternas) (*GestorDespachador, error) {
 
 // Cerrar limpia los recursos del GestorDespachador
 func (m *GestorDespachador) Cerrar() error {
-	log.Printf("Cerrando despachador...")
-	// Señalizar cierre
-	close(m.finalizado)
-	log.Printf("Despachador cerrado exitosamente")
+	m.cierre.Do(func() {
+		log.Printf("Cerrando despachador...")
+		close(m.finalizado)
+		if mqtt, ok := m.clienteBorde.(*clienteBordeMQTT); ok {
+			mqtt.cerrar()
+		}
+		log.Printf("Despachador cerrado exitosamente")
+	})
 	return nil
 }
 
@@ -339,30 +347,41 @@ func (m *GestorDespachador) cargarNodosDesdeS3() error {
 
 	ctx := context.TODO()
 
-	// Listar todos los objetos en el bucket con prefijo "nodos/"
 	input := &s3.ListObjectsV2Input{
 		Bucket: aws.String(m.config.Bucket),
 		Prefix: aws.String("nodos/"),
 	}
 
-	result, err := m.s3.ListObjectsV2(ctx, input)
-	if err != nil {
-		return fmt.Errorf("error listando nodos desde S3: %v", err)
+	var claves []string
+	for {
+		result, err := m.s3.ListObjectsV2(ctx, input)
+		if err != nil {
+			return fmt.Errorf("error listando nodos desde S3: %v", err)
+		}
+		for _, obj := range result.Contents {
+			if obj.Key != nil {
+				claves = append(claves, *obj.Key)
+			}
+		}
+		if result.IsTruncated == nil || !*result.IsTruncated {
+			break
+		}
+		input.ContinuationToken = result.NextContinuationToken
 	}
 
-	// Actualizar la lista de nodos en memoria
 	nuevosNodos := make(map[string]*tipos.Nodo)
 
-	for _, obj := range result.Contents {
+	for _, clave := range claves {
+		objKey := clave
 		// Obtener el objeto completo
 		getInput := &s3.GetObjectInput{
 			Bucket: aws.String(m.config.Bucket),
-			Key:    obj.Key,
+			Key:    &objKey,
 		}
 
 		getOutput, err := m.s3.GetObject(ctx, getInput)
 		if err != nil {
-			log.Printf("Error obteniendo nodo %s: %v", *obj.Key, err)
+			log.Printf("Error obteniendo nodo %s: %v", clave, err)
 			continue
 		}
 
@@ -370,14 +389,14 @@ func (m *GestorDespachador) cargarNodosDesdeS3() error {
 		data, err := io.ReadAll(getOutput.Body)
 		getOutput.Body.Close()
 		if err != nil {
-			log.Printf("Error leyendo nodo %s: %v", *obj.Key, err)
+			log.Printf("Error leyendo nodo %s: %v", clave, err)
 			continue
 		}
 
 		// Deserializar el nodo
 		var nodo tipos.Nodo
 		if err := json.Unmarshal(data, &nodo); err != nil {
-			log.Printf("Error deserializando nodo %s: %v", *obj.Key, err)
+			log.Printf("Error deserializando nodo %s: %v", clave, err)
 			continue
 		}
 
@@ -405,7 +424,7 @@ func (m *GestorDespachador) cargarNodosDesdeS3() error {
 // consultarPuntoBorde consulta el último punto al borde con timeout
 // Los tiempos son opcionales (nil = sin filtro temporal)
 // Retorna el resultado columnar y error si hubo problemas
-func (m *GestorDespachador) consultarPuntoBorde(nodo tipos.Nodo, nombreSerie string, tiempoInicio, tiempoFin *time.Time, timeout time.Duration) (tipos.ResultadoConsultaPunto, error) {
+func (m *GestorDespachador) consultarPuntoBorde(ctx context.Context, nodo tipos.Nodo, nombreSerie string, tiempoInicio, tiempoFin *time.Time, timeout time.Duration) (tipos.ResultadoConsultaPunto, error) {
 	solicitud := tipos.SolicitudConsultaPunto{
 		Serie: nombreSerie,
 	}
@@ -420,7 +439,7 @@ func (m *GestorDespachador) consultarPuntoBorde(nodo tipos.Nodo, nombreSerie str
 		solicitud.TiempoFin = &t
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	respuesta, err := m.clienteBorde.ConsultarUltimoPunto(ctx, nodo.NodoID, nodo.Direccion, solicitud)
@@ -465,6 +484,25 @@ func (m *GestorDespachador) descargarYDescomprimirBloque(clave string, serie tip
 	return mediciones, nil
 }
 
+// bloqueDeMayorFin elige la clave cuyo tiempo de fin es el mayor.
+func bloqueDeMayorFin(claves []string) (string, int64, bool) {
+	var mejor string
+	var finMax int64
+	hay := false
+	for _, clave := range claves {
+		_, _, fin, err := tipos.ParsearClaveS3Datos(clave)
+		if err != nil {
+			continue
+		}
+		if !hay || fin > finMax {
+			hay = true
+			finMax = fin
+			mejor = clave
+		}
+	}
+	return mejor, finMax, hay
+}
+
 // listarBloquesEnRango lista los bloques de S3 que intersectan con el rango de tiempo dado
 // Retorna las claves de los objetos S3 ordenadas por tiempo
 func (m *GestorDespachador) listarBloquesEnRango(nodoID string, serieID int, inicio, fin int64) ([]string, error) {
@@ -478,27 +516,30 @@ func (m *GestorDespachador) listarBloquesEnRango(nodoID string, serieID int, ini
 		Prefix: aws.String(prefijo),
 	}
 
-	result, err := m.s3.ListObjectsV2(ctx, input)
-	if err != nil {
-		return nil, fmt.Errorf("error listando bloques desde S3: %v", err)
-	}
-
 	var bloquesEnRango []string
-
-	for _, obj := range result.Contents {
-		// Extraer tiempos del nombre del bloque usando función centralizada
-		// Formato: <nodoID>/<serieID>_<tiempoInicio>_<tiempoFin>
-		clave := *obj.Key
-		_, bloqueInicio, bloqueFin, err := tipos.ParsearClaveS3Datos(clave)
+	for {
+		result, err := m.s3.ListObjectsV2(ctx, input)
 		if err != nil {
-			continue // Ignorar bloques con formato inválido
+			return nil, fmt.Errorf("error listando bloques desde S3: %v", err)
 		}
 
-		// Verificar si el bloque intersecta con el rango solicitado
-		// Un bloque intersecta si: bloqueInicio <= fin AND bloqueFin >= inicio
-		if bloqueInicio <= fin && bloqueFin >= inicio {
-			bloquesEnRango = append(bloquesEnRango, clave)
+		for _, obj := range result.Contents {
+			if obj.Key == nil {
+				continue
+			}
+			clave := *obj.Key
+			_, bloqueInicio, bloqueFin, err := tipos.ParsearClaveS3Datos(clave)
+			if err != nil {
+				continue
+			}
+			if bloqueInicio <= fin && bloqueFin >= inicio {
+				bloquesEnRango = append(bloquesEnRango, clave)
+			}
 		}
+		if result.IsTruncated == nil || !*result.IsTruncated {
+			break
+		}
+		input.ContinuationToken = result.NextContinuationToken
 	}
 
 	// Ordenar bloques por tiempo de inicio (el nombre incluye el tiempo con padding)
@@ -561,41 +602,39 @@ func (m *GestorDespachador) consultarDatosS3(nodo tipos.Nodo, serie tipos.Serie,
 		close(resultadoChan)
 	}()
 
-	// Recolectar todos los resultados
 	var todasMediciones []tipos.Medicion
-	errores := 0
+	var primerError error
 	for res := range resultadoChan {
 		if res.err != nil {
-			log.Printf("%v", res.err)
-			errores++
+			if primerError == nil {
+				primerError = res.err
+			}
 			continue
 		}
-		// Filtrar mediciones dentro del rango exacto
 		for _, med := range res.mediciones {
 			if med.Tiempo >= inicio && med.Tiempo <= fin {
 				todasMediciones = append(todasMediciones, med)
 			}
 		}
 	}
-
-	// Si todos los bloques fallaron, retornar error
-	if errores == len(bloques) {
-		return nil, fmt.Errorf("todos los bloques fallaron al descargar de S3")
+	if primerError != nil {
+		return nil, primerError
 	}
 
 	return todasMediciones, nil
 }
 
-// consultarBordeConTimeout consulta datos al borde con un timeout específico
-// Retorna resultado vacío y nil si el borde no está disponible (timeout o error de conexión)
-func (m *GestorDespachador) consultarBordeConTimeout(nodo tipos.Nodo, serie string, inicio, fin int64, timeout time.Duration) (tipos.ResultadoConsultaRango, error) {
+// consultarBordeConTimeout consulta datos al borde con un timeout específico.
+// Propaga errores de timeout/conexión para que el despachador marque el nodo
+// como no disponible. Si ctx se cancela, el cliente MQTT publica cancelación.
+func (m *GestorDespachador) consultarBordeConTimeout(ctx context.Context, nodo tipos.Nodo, serie string, inicio, fin int64, timeout time.Duration) (tipos.ResultadoConsultaRango, error) {
 	solicitud := tipos.SolicitudConsultaRango{
 		Serie:        serie,
 		TiempoInicio: inicio,
 		TiempoFin:    fin,
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	respuesta, err := m.clienteBorde.ConsultarRango(ctx, nodo.NodoID, nodo.Direccion, solicitud)
@@ -738,7 +777,8 @@ func (m *GestorDespachador) combinarResultadosTabulares(resultados []tipos.Resul
 // Esta función funciona incluso si el borde está offline (corte de luz/internet).
 // Soporta wildcards en el path de la serie (ej: */temp, sensor_01/*).
 // Retorna resultado en formato tabular.
-func (m *GestorDespachador) ConsultarRango(nombreSerie string, tiempoInicio, tiempoFin time.Time) (tipos.ResultadoConsultaRango, error) {
+// Si ctx se cancela (p. ej. cliente HTTP aborta), se propaga cancelación MQTT al borde.
+func (m *GestorDespachador) ConsultarRango(ctx context.Context, nombreSerie string, tiempoInicio, tiempoFin time.Time) (tipos.ResultadoConsultaRango, error) {
 	// Buscar todas las series que coincidan (path exacto o wildcard)
 	seriesEncontradas, err := m.buscarSeriesPorPath(nombreSerie)
 	if err != nil {
@@ -769,7 +809,7 @@ func (m *GestorDespachador) ConsultarRango(nombreSerie string, tiempoInicio, tie
 			datosS3, errS3 = m.consultarDatosS3(sn.nodo, sn.serie, inicio, fin)
 
 			// Consultar borde
-			datosBorde, errBorde = m.consultarBordeConTimeout(sn.nodo, sn.path, inicio, fin, m.timeoutBordeEfectivo())
+			datosBorde, errBorde = m.consultarBordeConTimeout(ctx, sn.nodo, sn.path, inicio, fin, m.timeoutBordeEfectivo())
 
 			resultados <- resultadoSerie{
 				resultado: m.combinarResultadosTabular(datosS3, datosBorde, sn.path),
@@ -806,9 +846,8 @@ func (m *GestorDespachador) ConsultarRango(nombreSerie string, tiempoInicio, tie
 		}
 	}
 
-	// Si hubo errores de S3 en todas las series, reportar
-	if len(erroresS3) == len(seriesEncontradas) {
-		return tipos.ResultadoConsultaRango{}, fmt.Errorf("error consultando S3: %v", erroresS3)
+	if len(erroresS3) > 0 {
+		return tipos.ResultadoConsultaRango{}, fmt.Errorf("error consultando S3: %s", erroresS3[0])
 	}
 
 	// Combinar todos los resultados en formato tabular final
@@ -831,7 +870,7 @@ func (m *GestorDespachador) ConsultarRango(nombreSerie string, tiempoInicio, tie
 //
 // Retorna el último punto de CADA serie en formato columnar.
 // Las series sin datos son excluidas del resultado.
-func (m *GestorDespachador) ConsultarUltimoPunto(nombreSerie string, tiempoInicio, tiempoFin *time.Time) (tipos.ResultadoConsultaPunto, error) {
+func (m *GestorDespachador) ConsultarUltimoPunto(ctx context.Context, nombreSerie string, tiempoInicio, tiempoFin *time.Time) (tipos.ResultadoConsultaPunto, error) {
 	// Buscar todas las series que coincidan (path exacto o wildcard)
 	seriesEncontradas, err := m.buscarSeriesPorPath(nombreSerie)
 	if err != nil {
@@ -868,7 +907,7 @@ func (m *GestorDespachador) ConsultarUltimoPunto(nombreSerie string, tiempoInici
 			bordeError := false
 
 			// Primero intentar con el borde (tiene datos más recientes)
-			resBorde, err := m.consultarPuntoBorde(sn.nodo, sn.path, tiempoInicio, tiempoFin, m.timeoutBordeEfectivo())
+			resBorde, err := m.consultarPuntoBorde(ctx, sn.nodo, sn.path, tiempoInicio, tiempoFin, m.timeoutBordeEfectivo())
 			if err != nil {
 				bordeError = true
 				log.Printf("Advertencia: error consultando borde para serie %s: %v", sn.path, err)
@@ -884,28 +923,27 @@ func (m *GestorDespachador) ConsultarUltimoPunto(nombreSerie string, tiempoInici
 				}
 			}
 
-			// Si el borde no responde o no tiene datos, buscar en S3
-			if !encontrado {
-				bloques, err := m.listarBloquesEnRango(sn.nodo.NodoID, sn.serie.SerieId, inicioNano, finNano)
-				if err == nil && len(bloques) > 0 {
-					ultimoBloque := bloques[len(bloques)-1]
-					mediciones, err := m.descargarYDescomprimirBloque(ultimoBloque, sn.serie)
-					if err == nil && len(mediciones) > 0 {
-						// Encontrar la medición más reciente dentro del rango
-						var ultimaMed *tipos.Medicion
-						for i := range mediciones {
-							med := &mediciones[i]
-							// Verificar que está en el rango si se especificó
-							if med.Tiempo >= inicioNano && med.Tiempo <= finNano {
-								if ultimaMed == nil || med.Tiempo > ultimaMed.Tiempo {
-									ultimaMed = med
+			if m.s3 != nil {
+				bloques, errLista := m.listarBloquesEnRango(sn.nodo.NodoID, sn.serie.SerieId, inicioNano, finNano)
+				if errLista == nil && len(bloques) > 0 {
+					clave, finBloque, hayBloque := bloqueDeMayorFin(bloques)
+					if hayBloque && (!encontrado || finBloque > tiempo) {
+						mediciones, err := m.descargarYDescomprimirBloque(clave, sn.serie)
+						if err == nil && len(mediciones) > 0 {
+							var ultimaMed *tipos.Medicion
+							for i := range mediciones {
+								med := &mediciones[i]
+								if med.Tiempo >= inicioNano && med.Tiempo <= finNano {
+									if ultimaMed == nil || med.Tiempo > ultimaMed.Tiempo {
+										ultimaMed = med
+									}
 								}
 							}
-						}
-						if ultimaMed != nil {
-							tiempo = ultimaMed.Tiempo
-							valor = ultimaMed.Valor
-							encontrado = true
+							if ultimaMed != nil {
+								tiempo = ultimaMed.Tiempo
+								valor = ultimaMed.Valor
+								encontrado = true
+							}
 						}
 					}
 				}
@@ -1088,6 +1126,7 @@ func (m *GestorDespachador) buscarSeriesPorPath(path string) ([]serieConNodo, er
 // Soporta wildcards en el path de la serie (ej: */temp, sensor_01/*).
 // Retorna una matriz donde Valores[agregacion][serie] contiene el valor agregado.
 func (m *GestorDespachador) ConsultarAgregacion(
+	ctx context.Context,
 	nombreSerie string,
 	tiempoInicio, tiempoFin time.Time,
 	agregaciones []tipos.TipoAgregacion,
@@ -1097,7 +1136,7 @@ func (m *GestorDespachador) ConsultarAgregacion(
 	}
 
 	// Usar ConsultarRango para obtener datos combinados
-	resultado, err := m.ConsultarRango(nombreSerie, tiempoInicio, tiempoFin)
+	resultado, err := m.ConsultarRango(ctx, nombreSerie, tiempoInicio, tiempoFin)
 	if err != nil {
 		return tipos.ResultadoAgregacion{}, err
 	}
@@ -1158,6 +1197,7 @@ func (m *GestorDespachador) ConsultarAgregacion(
 // Retorna una matriz donde Valores[agregacion][bucket][serie] contiene el valor agregado.
 // Los valores faltantes (bucket sin datos para una serie) se representan como math.NaN().
 func (m *GestorDespachador) ConsultarAgregacionTemporal(
+	ctx context.Context,
 	nombreSerie string,
 	tiempoInicio, tiempoFin time.Time,
 	agregaciones []tipos.TipoAgregacion,
@@ -1172,7 +1212,7 @@ func (m *GestorDespachador) ConsultarAgregacionTemporal(
 	}
 
 	// Usar ConsultarRango para obtener datos combinados
-	resultado, err := m.ConsultarRango(nombreSerie, tiempoInicio, tiempoFin)
+	resultado, err := m.ConsultarRango(ctx, nombreSerie, tiempoInicio, tiempoFin)
 	if err != nil {
 		return tipos.ResultadoAgregacionTemporal{}, err
 	}

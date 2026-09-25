@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cockroachdb/pebble"
 	"github.com/sensorwave-dev/sensorwave/tipos"
 )
 
@@ -125,10 +124,7 @@ func (me *GestorBorde) consultarRangoSerie(serie tipos.Serie, tiempoInicio, tiem
 	lowerBound := []byte(keyPrefix)
 	upperBound := []byte(keyPrefix + "~") // '~' es mayor que todos los números
 
-	iter, err := me.db.NewIter(&pebble.IterOptions{
-		LowerBound: lowerBound,
-		UpperBound: upperBound,
-	})
+	iter, err := me.db.Recorrer(lowerBound, upperBound)
 	if err != nil {
 		return nil, fmt.Errorf("error al crear iterador: %v", err)
 	}
@@ -274,60 +270,96 @@ func (me *GestorBorde) consultarUltimoPuntoSerie(serie tipos.Serie, tiempoInicio
 		return ultimaMedicion, nil
 	}
 
-	// Sin rango: comportamiento original - último punto absoluto
-	// Primero revisar el WAL (puntos no comprimidos aún)
 	if csInterface, ok := me.coordinadores.Load(serie.Path); ok {
 		cs := csInterface.(*CoordinadorSerie)
 		cs.mu.Lock()
 		defer cs.mu.Unlock()
-
-		// Leer directamente la medición más reciente en ingesta
-		ultimaMedicion, encontrada, err := me.leerUltimoPuntoIngesta(serie.SerieId)
-		if err == nil && encontrada {
-			return ultimaMedicion, nil
-		}
 	}
 
-	// Buscar el último bloque para esta serie
-	keyPrefix := fmt.Sprintf("datos/%010d/", serie.SerieId)
-	lowerBound := []byte(keyPrefix)
-	upperBound := []byte(keyPrefix + "~")
-
-	iter, err := me.db.NewIter(&pebble.IterOptions{
-		LowerBound: lowerBound,
-		UpperBound: upperBound,
-	})
+	ultimaIngesta, hayIngesta, err := me.leerUltimoPuntoIngesta(serie.SerieId)
 	if err != nil {
-		return tipos.Medicion{}, fmt.Errorf("error al crear iterador: %v", err)
+		return tipos.Medicion{}, err
+	}
+
+	claveBloque, finBloque, hayBloque, err := me.bloqueDeMayorFin(serie.SerieId)
+	if err != nil {
+		return tipos.Medicion{}, err
+	}
+
+	if hayBloque && (!hayIngesta || finBloque > ultimaIngesta.Tiempo) {
+		return me.puntoDelBloque(claveBloque, serie)
+	}
+	if hayIngesta {
+		return ultimaIngesta, nil
+	}
+	return tipos.Medicion{}, fmt.Errorf("no hay mediciones para la serie: %s", serie.Path)
+}
+
+// bloqueDeMayorFin recorre las claves de bloque sin abrirlas y devuelve la de mayor fin.
+func (me *GestorBorde) bloqueDeMayorFin(serieId int) (string, int64, bool, error) {
+	prefijo := fmt.Sprintf("datos/%010d/", serieId)
+	iter, err := me.db.Recorrer([]byte(prefijo), []byte(prefijo+"~"))
+	if err != nil {
+		return "", 0, false, fmt.Errorf("error al crear iterador: %v", err)
 	}
 	defer iter.Close()
 
-	// Ir al último elemento
-	if !iter.Last() {
-		return tipos.Medicion{}, fmt.Errorf("no hay mediciones para la serie: %s", serie.Path)
+	var mejorClave string
+	var mejorFin int64
+	hay := false
+	for iter.First(); iter.Valid(); iter.Next() {
+		clave := string(iter.Key())
+		fin, ok := finDeClaveBloque(clave)
+		if !ok {
+			continue
+		}
+		if !hay || fin > mejorFin {
+			hay = true
+			mejorFin = fin
+			mejorClave = clave
+		}
 	}
+	if err := iter.Error(); err != nil {
+		return "", 0, false, err
+	}
+	return mejorClave, mejorFin, hay, nil
+}
 
-	datosComprimidos := make([]byte, len(iter.Value()))
-	copy(datosComprimidos, iter.Value())
+func finDeClaveBloque(clave string) (int64, bool) {
+	partes := strings.Split(clave, "/")
+	if len(partes) != 3 {
+		return 0, false
+	}
+	tiempos := strings.Split(partes[2], "_")
+	if len(tiempos) != 2 {
+		return 0, false
+	}
+	fin, err := strconv.ParseInt(tiempos[1], 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return fin, true
+}
 
-	mediciones, err := me.descomprimirBloque(datosComprimidos, serie)
+func (me *GestorBorde) puntoDelBloque(clave string, serie tipos.Serie) (tipos.Medicion, error) {
+	datos, err := me.db.Obtener([]byte(clave))
+	if err != nil {
+		return tipos.Medicion{}, fmt.Errorf("error al leer bloque: %v", err)
+	}
+	mediciones, err := me.descomprimirBloque(datos, serie)
 	if err != nil {
 		return tipos.Medicion{}, fmt.Errorf("error al descomprimir último bloque: %v", err)
 	}
-
 	if len(mediciones) == 0 {
 		return tipos.Medicion{}, fmt.Errorf("bloque vacío para serie: %s", serie.Path)
 	}
-
-	// Encontrar la medición más reciente en el bloque
-	ultimaMedicion := mediciones[0]
+	ultima := mediciones[0]
 	for _, m := range mediciones[1:] {
-		if m.Tiempo > ultimaMedicion.Tiempo {
-			ultimaMedicion = m
+		if m.Tiempo > ultima.Tiempo {
+			ultima = m
 		}
 	}
-
-	return ultimaMedicion, nil
+	return ultima, nil
 }
 
 // deberiaOmitirBloque determina si un bloque debe ser omitido basado en su rango temporal

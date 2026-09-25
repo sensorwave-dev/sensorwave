@@ -112,12 +112,7 @@ func IniciarHTTP(puerto string) {
 	listo := make(chan struct{})
 
 	go func() {
-		// Crear un ServeMux individual para esta instancia (evita conflictos de registro)
-		mux := http.NewServeMux()
-
-		// Endpoint para manejar conexiones
-		mux.HandleFunc("/sensorwave", manejadorHTTP)
-		mux.HandleFunc("/sensorwave/ack", manejarAckHTTP)
+		mux := muxHTTP()
 
 		// Crear listener primero para saber cuándo está listo
 		listener, err := net.Listen("tcp", ":"+puerto)
@@ -144,17 +139,18 @@ func IniciarHTTP(puerto string) {
 	<-listo // Esperar a que la goroutine avise que está listo
 }
 
-// manejador es el punto de entrada para todas las solicitudes HTTP
-func manejadorHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodGet {
-		manejarSuscripcionHTTP(w, r)
-	}
-	if r.Method == http.MethodPost {
-		manejarPublicacionHTTP(w, r)
-	}
-	if r.Method == http.MethodDelete {
-		manejarDesuscripcionHTTP(w, r)
-	}
+func muxHTTP() *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /sensorwave", manejarSuscripcionHTTP)
+	mux.HandleFunc("HEAD /sensorwave", metodoNoPermitidoHTTP)
+	mux.HandleFunc("POST /sensorwave", manejarPublicacionHTTP)
+	mux.HandleFunc("DELETE /sensorwave", manejarDesuscripcionHTTP)
+	mux.HandleFunc("POST /sensorwave/ack", manejarAckHTTP)
+	return mux
+}
+
+func metodoNoPermitidoHTTP(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusMethodNotAllowed)
 }
 
 func manejarSuscripcionHTTP(w http.ResponseWriter, r *http.Request) {
@@ -331,24 +327,12 @@ func manejarPublicacionHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	mensaje.Topico = mensajeTopico
 
-	// Detectar rebote ANTES de estampar el origen local: un mensaje que
-	// regresa del upstream ya viene con Origen == idLocal. Si estampáramos
-	// primero, todo mensaje local fresco (Orgen="") se marcaría como rebotado.
-	if esMensajeRebotado(mensaje) {
-		loggerPrint(LOG_HTTP, "Mensaje ignorado - Regresó del upstream, ya fue distribuido localmente - Tópico: %s", mensaje.Topico)
-		return
-	}
-	asignarOrigenSiVacio(&mensaje)
-
-	loggerPrint(LOG_HTTP, "Mensaje recibido - Tópico: %s, QoS: %d, MensajeID: %s", mensaje.Topico, mensaje.QoS, mensaje.MensajeID)
-
 	// enviar a los protocolos
 	if mensaje.Original {
 		mensaje.Original = false
 		go enviarHTTP(LOG_HTTP, mensaje)
 		go enviarCoAP(LOG_HTTP, mensaje)
 		go enviarMQTT(LOG_HTTP, mensaje)
-		go reenviarUpstream(mensaje)
 	}
 	// Responder al cliente que envió el POST
 	if mensaje.QoS == 1 {
@@ -413,11 +397,6 @@ type solicitudAck struct {
 }
 
 func manejarAckHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
-
 	var ack solicitudAck
 	if err := json.NewDecoder(r.Body).Decode(&ack); err != nil {
 		http.Error(w, "Error al procesar el cuerpo de la solicitud", http.StatusBadRequest)
@@ -437,7 +416,6 @@ func manejarAckHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	inflightHTTP.Ack(ack.MensajeID, ack.ClienteID)
-	loggerPrint(LOG_HTTP, "ACK recibido - ClienteID: %s, MensajeID: %s", ack.ClienteID, ack.MensajeID)
 	w.WriteHeader(http.StatusOK)
 }
 

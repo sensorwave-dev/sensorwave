@@ -43,7 +43,7 @@ func TestEsTopicoControl(t *testing.T) {
 		topico   string
 		esperado bool
 	}{
-		{"swctl/nodos/x/latido", true},
+		{"swctl/nodos/x/consulta/solicitud/1", true},
 		{"swctl/", true},
 		{"swctl", false},
 		{"sensores/temp", false},
@@ -52,27 +52,6 @@ func TestEsTopicoControl(t *testing.T) {
 	for _, c := range casos {
 		if got := EsTopicoControl(c.topico); got != c.esperado {
 			t.Fatalf("EsTopicoControl(%q) = %v, esperado %v", c.topico, got, c.esperado)
-		}
-	}
-}
-
-func TestEsTopicoPermitidoParaProtocolo(t *testing.T) {
-	casos := []struct {
-		topico    string
-		protocolo string
-		esperado  bool
-	}{
-		{"swctl/nodos/x/latido", "mqtt", true},
-		{"swctl/nodos/x/latido", "http", false},
-		{"swctl/nodos/x/latido", "coap", false},
-		{"swctl/nodos/x/latido", "MQTT", true},
-		{"sensores/temp", "http", true},
-		{"sensores/temp", "mqtt", true},
-	}
-	for _, c := range casos {
-		if got := EsTopicoPermitidoParaProtocolo(c.topico, c.protocolo); got != c.esperado {
-			t.Fatalf("EsTopicoPermitidoParaProtocolo(%q,%q) = %v, esperado %v",
-				c.topico, c.protocolo, got, c.esperado)
 		}
 	}
 }

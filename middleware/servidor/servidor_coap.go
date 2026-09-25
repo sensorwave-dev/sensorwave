@@ -124,7 +124,6 @@ func manejadorCoAP(w mux.ResponseWriter, r *mux.Message) {
 			return
 		}
 		mensaje.Topico = mensajeTopico
-		loggerPrint(LOG_COAP, "Mensaje recibido - Tópico: %s, QoS: %d, MensajeID: %s", mensaje.Topico, mensaje.QoS, mensaje.MensajeID)
 		manejarPublicacionCoAP(w, r, normalizado, mensaje)
 	default:
 		loggerPrint(LOG_COAP, "Error - Método no soportado: %v", metodo)
@@ -160,22 +159,12 @@ func manejarPublicacionCoAP(w mux.ResponseWriter, r *mux.Message, topico string,
 		loggerPrint(LOG_COAP, "Error - No se pudo enviar respuesta: %v", err)
 	}
 
-	// Si el mensaje fue originado por esta instancia y regresó del upstream, no distribuir localmente.
-	// Detectar rebote ANTES de estampar el origen local: un mensaje que regresa
-	// del upstream ya viene con Origen == idLocal.
-	if esMensajeRebotado(payload) {
-		loggerPrint(LOG_COAP, "Mensaje ignorado - Regresó del upstream, ya fue distribuido localmente - Tópico: %s", payload.Topico)
-		return
-	}
-	asignarOrigenSiVacio(&payload)
-
 	// enviar publicaciones a los protocolos
 	if payload.Original {
 		payload.Original = false
 		go enviarCoAP(LOG_COAP, payload)
 		go enviarHTTP(LOG_COAP, payload)
 		go enviarMQTT(LOG_COAP, payload)
-		go reenviarUpstream(payload)
 	}
 }
 

@@ -1,7 +1,10 @@
 package borde
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -134,18 +137,26 @@ func HandlerCrearSerie(gestor *GestorBorde) http.HandlerFunc {
 			serie.TamañoBloque = req.TamañoBloque
 		}
 		if serie.CompresionBytes == "" {
-			serie.CompresionBytes = tipos.SinCompresion
+			serie.CompresionBytes = tipos.SinCompresionBytes
 		}
 		if serie.CompresionBloque == "" {
-			serie.CompresionBloque = tipos.LZ4
+			serie.CompresionBloque = tipos.SinCompresionBloque
 		}
 
-		if err := gestor.CrearSerie(serie); err != nil {
-			tipos.EnviarError(w, http.StatusInternalServerError, err.Error())
+		if _, err := gestor.ObtenerSeries(req.Path); err == nil {
+			tipos.EnviarJSON(w, map[string]any{
+				"exito":   true,
+				"mensaje": fmt.Sprintf("Serie %s ya existe", req.Path),
+			})
 			return
 		}
 
-		tipos.EnviarJSON(w, map[string]interface{}{
+		if err := gestor.CrearSerie(serie); err != nil {
+			tipos.EnviarError(w, estadoErrorOperacion(err), err.Error())
+			return
+		}
+
+		tipos.EnviarJSON(w, map[string]any{
 			"exito":   true,
 			"mensaje": fmt.Sprintf("Serie %s creada correctamente", req.Path),
 		})
@@ -187,12 +198,14 @@ func HandlerInsertar(gestor *GestorBorde) http.HandlerFunc {
 		}
 
 		var req struct {
-			Path        string      `json:"path"`
-			Valor       interface{} `json:"valor"`
-			MarcaTiempo int64       `json:"marca_tiempo,omitempty"`
+			Path        string `json:"path"`
+			Valor       any    `json:"valor"`
+			MarcaTiempo int64  `json:"marca_tiempo,omitempty"`
 		}
 
-		if err := tipos.LeerJSON(r, &req); err != nil {
+		dec := json.NewDecoder(r.Body)
+		dec.UseNumber()
+		if err := dec.Decode(&req); err != nil {
 			tipos.EnviarError(w, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -206,8 +219,19 @@ func HandlerInsertar(gestor *GestorBorde) http.HandlerFunc {
 			req.MarcaTiempo = time.Now().UnixNano()
 		}
 
-		if err := gestor.Insertar(req.Path, req.MarcaTiempo, req.Valor); err != nil {
-			tipos.EnviarError(w, http.StatusInternalServerError, err.Error())
+		serie, err := gestor.ObtenerSeries(req.Path)
+		if err != nil {
+			tipos.EnviarError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		valor, err := valorParaSerie(serie, req.Valor)
+		if err != nil {
+			tipos.EnviarError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		if err := gestor.Insertar(req.Path, req.MarcaTiempo, valor); err != nil {
+			tipos.EnviarError(w, estadoErrorOperacion(err), err.Error())
 			return
 		}
 
@@ -619,6 +643,59 @@ func HandlerActualizarTags(gestor *GestorBorde) http.HandlerFunc {
 // ============================================================================
 // HELPERS
 // ============================================================================
+
+func estadoErrorOperacion(err error) int {
+	var validacion errorValidacion
+	if errors.As(err, &validacion) || errors.Is(err, errTipoIncompatible) {
+		return http.StatusBadRequest
+	}
+	if errors.Is(err, errSerieNoEncontrada) {
+		return http.StatusNotFound
+	}
+	return http.StatusInternalServerError
+}
+
+// valorParaSerie convierte el número JSON al tipo de la serie.
+// En Integer exige que el texto entre en int64.
+func valorParaSerie(serie tipos.Serie, valor any) (any, error) {
+	switch serie.TipoDatos {
+	case tipos.Integer:
+		numero, ok := valor.(json.Number)
+		if !ok {
+			return nil, errorValidacion{fmt.Sprintf("tipo de dato incompatible: esperado Integer, recibido %T", valor)}
+		}
+		entero, err := numero.Int64()
+		if err != nil {
+			return nil, errorValidacion{fmt.Sprintf("el valor no entra en int64: %v", err)}
+		}
+		return entero, nil
+	case tipos.Real:
+		numero, ok := valor.(json.Number)
+		if !ok {
+			return valor, nil
+		}
+		real, err := numero.Float64()
+		if err != nil {
+			return nil, errorValidacion{fmt.Sprintf("valor real inválido: %v", err)}
+		}
+		return real, nil
+	default:
+		return valor, nil
+	}
+}
+
+// adecuarValor convierte un número JSON entero al tipo de la serie.
+// Un real con fracción se deja como está y Insertar lo rechaza en una serie Integer.
+func adecuarValor(tipo tipos.TipoDatos, valor any) any {
+	if tipo != tipos.Integer {
+		return valor
+	}
+	numero, ok := valor.(float64)
+	if !ok || math.IsNaN(numero) || math.IsInf(numero, 0) || numero != math.Trunc(numero) {
+		return valor
+	}
+	return int64(numero)
+}
 
 func parsearTipoDatos(s string) tipos.TipoDatos {
 	s = strings.ToLower(s)

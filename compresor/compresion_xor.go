@@ -45,11 +45,19 @@ func (bw *escritorBits) escribirBit(bit bool) {
 	}
 }
 
-// escribirBits escribe múltiples bits
+// escribirBits escribe múltiples bits, del más significativo al menos.
 func (bw *escritorBits) escribirBits(value uint64, numBits int) {
 	for i := numBits - 1; i >= 0; i-- {
-		bw.escribirBit((value & (1 << i)) != 0)
+		bw.escribirBit(value&(uint64(1)<<i) != 0)
 	}
+}
+
+// mascaraBits devuelve los n bits bajos en 1. Con n >= 64, todos los bits.
+func mascaraBits(n int) uint64 {
+	if n >= 64 {
+		return ^uint64(0)
+	}
+	return (uint64(1) << n) - 1
 }
 
 // obtenerBytes obtiene los bytes escritos
@@ -96,8 +104,10 @@ func (c *CompresorXor) Comprimir(valores []float64) ([]byte, error) {
 
 		leadingZeros := bits.LeadingZeros64(xor)
 		trailingZeros := bits.TrailingZeros64(xor)
-
-		// Calcular los bits significativos
+		// El campo de ceros de adelante tiene 5 bits: 0 a 31.
+		if leadingZeros > 31 {
+			leadingZeros = 31
+		}
 		bitsSignificativos := 64 - leadingZeros - trailingZeros
 
 		// (a) If the meaningful bits fit within the length of the previously stored meaningful bits,
@@ -110,7 +120,7 @@ func (c *CompresorXor) Comprimir(valores []float64) ([]byte, error) {
 
 			// Extraer los bits significativos usando el rango anterior
 			bitsSignificativosAnterior := 64 - leadingZerosAnterior - trailingZerosAnterior
-			valorSignificativo := (xor >> trailingZerosAnterior) & ((1 << bitsSignificativosAnterior) - 1)
+			valorSignificativo := (xor >> trailingZerosAnterior) & mascaraBits(bitsSignificativosAnterior)
 			writer.escribirBits(valorSignificativo, bitsSignificativosAnterior)
 		} else {
 			// (b) Otherwise, store '1' in 1 bit. Store the number of leading zeros in the next 5 bits,
@@ -120,11 +130,10 @@ func (c *CompresorXor) Comprimir(valores []float64) ([]byte, error) {
 			// Almacenar leading zeros (5 bits, permite valores 0-31)
 			writer.escribirBits(uint64(leadingZeros), 5)
 
-			// Almacenar longitud de bits significativos (6 bits, permite valores 0-63)
-			writer.escribirBits(uint64(bitsSignificativos), 6)
+			// 6 bits guardan 0..63. El largo real es uno más, así 64 entra en el campo.
+			writer.escribirBits(uint64(bitsSignificativos-1), 6)
 
-			// Almacenar los bits significativos
-			valorSignificativo := (xor >> trailingZeros) & ((1 << bitsSignificativos) - 1)
+			valorSignificativo := (xor >> trailingZeros) & mascaraBits(bitsSignificativos)
 			writer.escribirBits(valorSignificativo, bitsSignificativos)
 
 			// Actualizar los valores anteriores
@@ -252,6 +261,7 @@ func (c *CompresorXor) Descomprimir(datos []byte) ([]float64, error) {
 			if err != nil {
 				return nil, fmt.Errorf("error leyendo meaningful bits: %v", err)
 			}
+			bitsSignificativos++
 
 			valorSignificativo, err := reader.leerBits(int(bitsSignificativos))
 			if err != nil {

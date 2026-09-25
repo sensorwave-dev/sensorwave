@@ -14,11 +14,11 @@ type TipoCompresionBloque string
 
 // Valores posibles para TipoCompresionBloque
 const (
-	Ninguna TipoCompresionBloque = "Ninguna" // Sin compresión
-	LZ4     TipoCompresionBloque = "LZ4"     // LZ4 - rápido, compresión moderada
-	ZSTD    TipoCompresionBloque = "ZSTD"    // Zstandard - mejor compresión, más lento
-	Snappy  TipoCompresionBloque = "Snappy"  // Snappy - muy rápido, compresión baja
-	Gzip    TipoCompresionBloque = "Gzip"    // Gzip - compatible, compresión moderada
+	SinCompresionBloque TipoCompresionBloque = "SinCompresionBloque" // Sin compresión
+	LZ4                 TipoCompresionBloque = "LZ4"                 // LZ4 - rápido, compresión moderada
+	ZSTD                TipoCompresionBloque = "ZSTD"                // Zstandard - mejor compresión, más lento
+	Snappy              TipoCompresionBloque = "Snappy"              // Snappy - muy rápido, compresión baja
+	Gzip                TipoCompresionBloque = "Gzip"                // Gzip - compatible, compresión moderada
 )
 
 // TipoCompresion - Algoritmos de compresión de nivel 1 (valores específicos)
@@ -27,7 +27,7 @@ type TipoCompresion string
 // Valores posibles para TipoCompresion
 const (
 	// Sin compresión - Compatible con todos los tipos
-	SinCompresion TipoCompresion = "SinCompresion"
+	SinCompresionBytes TipoCompresion = "SinCompresionBytes"
 
 	// Algoritmos para datos numéricos (Integer, Real)
 	DeltaDelta TipoCompresion = "DeltaDelta" // Delta-of-delta - óptimo para series monótonas y timestamps
