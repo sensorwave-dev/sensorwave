@@ -564,6 +564,16 @@ func (me *GestorBorde) abortarCreacion(err error) (*GestorBorde, error) {
 
 // ActivarFederacionMQTT inicia el plano de control MQTT si aún no está activo.
 // Pensado para pruebas y escenarios donde el nodo ya opera en modo local.
+// DesconectarFederacion cierra la sesión MQTT del borde. El almacenamiento
+// local y el cliente de objetos siguen abiertos.
+func (me *GestorBorde) DesconectarFederacion() {
+	if me.federacion == nil {
+		return
+	}
+	me.federacion.cerrar()
+	me.federacion = nil
+}
+
 func (me *GestorBorde) ActivarFederacionMQTT(broker string) error {
 	if broker == "" {
 		return fmt.Errorf("broker MQTT vacío")

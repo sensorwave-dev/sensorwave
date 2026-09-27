@@ -1751,6 +1751,45 @@ func TestMigrarPorTiempoAlmacenamiento_MigraBloquesAntiguos(t *testing.T) {
 	t.Log("migrarPorTiempoAlmacenamiento migra bloques antiguos correctamente")
 }
 
+func TestMigrarPorTiempoAlmacenamiento_FalloPutConservaBloque(t *testing.T) {
+	gestor := crearGestorBordeParaTest(t)
+
+	clienteOriginal := clienteS3
+	configOriginal := configuracionS3
+	defer func() {
+		clienteS3 = clienteOriginal
+		configuracionS3 = configOriginal
+	}()
+
+	mockS3 := &mockClienteS3{putObjectErr: assert.AnError}
+	clienteS3 = mockS3
+	configuracionS3 = tipos.ConfiguracionS3{Bucket: "test-bucket"}
+
+	serie := tipos.Serie{
+		SerieId:              1,
+		Path:                 "sensor/temp",
+		TipoDatos:            tipos.Real,
+		TamañoBloque:         100,
+		CompresionBloque:     tipos.SinCompresionBloque,
+		CompresionBytes:      tipos.SinCompresionBytes,
+		TiempoAlmacenamiento: int64(time.Hour),
+	}
+	gestor.cache.mu.Lock()
+	gestor.cache.datos["sensor/temp"] = serie
+	gestor.cache.mu.Unlock()
+
+	tiempoAntiguo := time.Now().Add(-2 * time.Hour).UnixNano()
+	mediciones := []tipos.Medicion{{Tiempo: tiempoAntiguo, Valor: float64(20.0)}}
+	bloque := crearBloqueComprimidoTest(t, serie, mediciones)
+	clave := generarClaveDatos(serie.SerieId, tiempoAntiguo, tiempoAntiguo)
+	require.NoError(t, gestor.db.Poner(clave, bloque))
+
+	err := gestor.migrarPorTiempoAlmacenamiento()
+	assert.NoError(t, err)
+	_, err = gestor.db.Obtener(clave)
+	assert.NoError(t, err)
+}
+
 // ============================================================================
 // TESTS DE CONSULTAS DE AGREGACIÓN (consultas.go)
 // ============================================================================

@@ -246,6 +246,33 @@ func (me *GestorBorde) iniciarCicloS3() {
 	log.Printf("Ciclo de S3 iniciado (intervalo: %v)", me.intervaloS3)
 }
 
+// EjecutarCicloS3 corre una vuelta del ciclo: registro del nodo, borrados
+// pendientes y migración de bloques vencidos.
+func (me *GestorBorde) EjecutarCicloS3() {
+	me.ejecutarCicloS3()
+}
+
+// ResumenAlmacenLocal cuenta los bloques de datos/, sus bytes y los puntos
+// que siguen en ingesta.
+func (me *GestorBorde) ResumenAlmacenLocal() (bloques int, nbytes int64, ingesta int, err error) {
+	iter, err := me.db.Recorrer([]byte("datos/"), []byte("datos0"))
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	for iter.First(); iter.Valid(); iter.Next() {
+		bloques++
+		nbytes += int64(len(iter.Value()))
+	}
+	iter.Close()
+
+	me.cache.mu.RLock()
+	defer me.cache.mu.RUnlock()
+	for _, serie := range me.cache.datos {
+		ingesta += me.contarPuntosIngesta(serie.SerieId)
+	}
+	return bloques, nbytes, ingesta, nil
+}
+
 // ejecutarCicloS3 registra el nodo, procesa borrados pendientes y migra bloques.
 // El registro se repite en cada vuelta: si el anterior no llegó, el siguiente lo crea.
 func (me *GestorBorde) ejecutarCicloS3() {
