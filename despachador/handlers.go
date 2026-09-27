@@ -106,7 +106,9 @@ func HandlerConsultarRango(gestor *GestorDespachador) http.HandlerFunc {
 		tiempoInicio := time.Unix(0, req.TiempoInicio)
 		tiempoFin := time.Unix(0, req.TiempoFin)
 
-		resultado, err := gestor.ConsultarRango(r.Context(), req.Serie, tiempoInicio, tiempoFin)
+		ctx, crono := medirSolicitud(r)
+		resultado, err := gestor.ConsultarRango(ctx, req.Serie, tiempoInicio, tiempoFin)
+		escribirTiempos(w, crono)
 		if err != nil {
 			responderErrorConsulta(w, err)
 			return
@@ -149,7 +151,9 @@ func HandlerConsultarUltimo(gestor *GestorDespachador) http.HandlerFunc {
 			tiempoFin = &t
 		}
 
-		resultado, err := gestor.ConsultarUltimoPunto(r.Context(), req.Serie, tiempoInicio, tiempoFin)
+		ctx, crono := medirSolicitud(r)
+		resultado, err := gestor.ConsultarUltimoPunto(ctx, req.Serie, tiempoInicio, tiempoFin)
+		escribirTiempos(w, crono)
 		if err != nil {
 			responderErrorConsulta(w, err)
 			return
@@ -195,7 +199,9 @@ func HandlerConsultarAgregacion(gestor *GestorDespachador) http.HandlerFunc {
 		tiempoInicio := time.Unix(0, req.TiempoInicio)
 		tiempoFin := time.Unix(0, req.TiempoFin)
 
-		resultado, err := gestor.ConsultarAgregacion(r.Context(), req.Serie, tiempoInicio, tiempoFin, agregaciones)
+		ctx, crono := medirSolicitud(r)
+		resultado, err := gestor.ConsultarAgregacion(ctx, req.Serie, tiempoInicio, tiempoFin, agregaciones)
+		escribirTiempos(w, crono)
 		if err != nil {
 			responderErrorConsulta(w, err)
 			return
@@ -252,7 +258,9 @@ func HandlerConsultarAgregacionTemporal(gestor *GestorDespachador) http.HandlerF
 		tiempoFin := time.Unix(0, req.TiempoFin)
 		intervalo := time.Duration(req.Intervalo)
 
-		resultado, err := gestor.ConsultarAgregacionTemporal(r.Context(), req.Serie, tiempoInicio, tiempoFin, agregaciones, intervalo)
+		ctx, crono := medirSolicitud(r)
+		resultado, err := gestor.ConsultarAgregacionTemporal(ctx, req.Serie, tiempoInicio, tiempoFin, agregaciones, intervalo)
+		escribirTiempos(w, crono)
 		if err != nil {
 			responderErrorConsulta(w, err)
 			return

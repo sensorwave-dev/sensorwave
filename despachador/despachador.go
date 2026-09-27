@@ -805,14 +805,21 @@ func (m *GestorDespachador) ConsultarRango(ctx context.Context, nombreSerie stri
 			var datosBorde tipos.ResultadoConsultaRango
 			var errS3, errBorde error
 
-			// Consultar S3
+			crono := tiemposDe(ctx)
+			inicioR2 := time.Now()
 			datosS3, errS3 = m.consultarDatosS3(sn.nodo, sn.serie, inicio, fin)
+			crono.sumarR2(time.Since(inicioR2))
 
-			// Consultar borde
+			inicioMQTT := time.Now()
 			datosBorde, errBorde = m.consultarBordeConTimeout(ctx, sn.nodo, sn.path, inicio, fin, m.timeoutBordeEfectivo())
+			crono.sumarMQTT(time.Since(inicioMQTT))
+
+			inicioUnion := time.Now()
+			combinado := m.combinarResultadosTabular(datosS3, datosBorde, sn.path)
+			crono.sumarUnion(time.Since(inicioUnion))
 
 			resultados <- resultadoSerie{
-				resultado: m.combinarResultadosTabular(datosS3, datosBorde, sn.path),
+				resultado: combinado,
 				errS3:     errS3,
 				errBorde:  errBorde,
 				path:      sn.path,
@@ -850,14 +857,14 @@ func (m *GestorDespachador) ConsultarRango(ctx context.Context, nombreSerie stri
 		return tipos.ResultadoConsultaRango{}, fmt.Errorf("error consultando S3: %s", erroresS3[0])
 	}
 
-	// Combinar todos los resultados en formato tabular final
+	inicioUnion := time.Now()
 	resultado := m.combinarResultadosTabulares(todosResultados)
 
-	// Agregar nodos no disponibles al resultado
 	for nodoID := range nodosNoDisponibles {
 		resultado.NodosNoDisponibles = append(resultado.NodosNoDisponibles, nodoID)
 	}
 	sort.Strings(resultado.NodosNoDisponibles)
+	tiemposDe(ctx).sumarUnion(time.Since(inicioUnion))
 
 	return resultado, nil
 }
@@ -906,8 +913,11 @@ func (m *GestorDespachador) ConsultarUltimoPunto(ctx context.Context, nombreSeri
 			encontrado := false
 			bordeError := false
 
-			// Primero intentar con el borde (tiene datos más recientes)
+			crono := tiemposDe(ctx)
+			inicioMQTT := time.Now()
 			resBorde, err := m.consultarPuntoBorde(ctx, sn.nodo, sn.path, tiempoInicio, tiempoFin, m.timeoutBordeEfectivo())
+			crono.sumarMQTT(time.Since(inicioMQTT))
+			inicioR2 := time.Now()
 			if err != nil {
 				bordeError = true
 				log.Printf("Advertencia: error consultando borde para serie %s: %v", sn.path, err)
@@ -949,6 +959,7 @@ func (m *GestorDespachador) ConsultarUltimoPunto(ctx context.Context, nombreSeri
 				}
 			}
 
+			crono.sumarR2(time.Since(inicioR2))
 			resultados <- resultadoSerie{
 				path:       sn.path,
 				tiempo:     tiempo,
@@ -987,6 +998,7 @@ func (m *GestorDespachador) ConsultarUltimoPunto(ctx context.Context, nombreSeri
 		return tipos.ResultadoConsultaPunto{}, fmt.Errorf("no se encontraron datos para la serie %s", nombreSerie)
 	}
 
+	inicioUnion := time.Now()
 	// Ordenar alfabéticamente por path
 	sort.Slice(puntos, func(i, j int) bool {
 		return puntos[i].path < puntos[j].path
@@ -1010,6 +1022,7 @@ func (m *GestorDespachador) ConsultarUltimoPunto(ctx context.Context, nombreSeri
 		resultado.NodosNoDisponibles = append(resultado.NodosNoDisponibles, nodoID)
 	}
 	sort.Strings(resultado.NodosNoDisponibles)
+	tiemposDe(ctx).sumarUnion(time.Since(inicioUnion))
 
 	return resultado, nil
 }
@@ -1140,6 +1153,7 @@ func (m *GestorDespachador) ConsultarAgregacion(
 	if err != nil {
 		return tipos.ResultadoAgregacion{}, err
 	}
+	inicioCalculo := time.Now()
 
 	if len(resultado.Series) == 0 || len(resultado.Tiempos) == 0 {
 		return tipos.ResultadoAgregacion{}, fmt.Errorf("no se encontraron datos para %s en el rango especificado", nombreSerie)
@@ -1183,6 +1197,7 @@ func (m *GestorDespachador) ConsultarAgregacion(
 		}
 	}
 
+	tiemposDe(ctx).sumarUnion(time.Since(inicioCalculo))
 	return tipos.ResultadoAgregacion{
 		Series:             resultado.Series, // Ya ordenadas alfabéticamente por ConsultarRango
 		Agregaciones:       agregaciones,
@@ -1216,6 +1231,7 @@ func (m *GestorDespachador) ConsultarAgregacionTemporal(
 	if err != nil {
 		return tipos.ResultadoAgregacionTemporal{}, err
 	}
+	inicioCalculo := time.Now()
 
 	if len(resultado.Series) == 0 || len(resultado.Tiempos) == 0 {
 		return tipos.ResultadoAgregacionTemporal{}, fmt.Errorf("no se encontraron datos para la serie %s en el rango especificado", nombreSerie)
@@ -1286,6 +1302,7 @@ func (m *GestorDespachador) ConsultarAgregacionTemporal(
 		}
 	}
 
+	tiemposDe(ctx).sumarUnion(time.Since(inicioCalculo))
 	return tipos.ResultadoAgregacionTemporal{
 		Series:             resultado.Series, // Ya ordenadas alfabéticamente por ConsultarRango
 		Tiempos:            intervalos,
