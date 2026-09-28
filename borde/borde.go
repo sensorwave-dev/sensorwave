@@ -626,6 +626,7 @@ func (me *GestorBorde) ActualizarTags(tags map[string]string) error {
 		log.Printf("Tags actualizados: %v", tags)
 	}
 
+	me.informarCatalogoS3("tags")
 	return nil
 }
 
@@ -819,6 +820,7 @@ func (me *GestorBorde) CrearSerie(config tipos.Serie) error {
 	me.coordinadores.Store(serieClave, coordinador)
 	me.lanzarCoordinador(coordinador)
 
+	me.informarCatalogoS3("serie nueva")
 	return nil
 }
 
@@ -996,8 +998,9 @@ func (me *GestorBorde) ObtenerEstadoMotorReglas() EstadoMotorReglas {
 
 // EliminarSerie elimina una serie y todos sus datos asociados.
 // Elimina: metadatos, bloques de datos locales y cache.
-// Si S3 está configurado, registra la eliminación pendiente y la procesa (best-effort).
-// La eliminación local siempre se completa; la eliminación de S3 se reintentará automáticamente.
+// Si S3 está configurado, registra la eliminación pendiente, sube el catálogo
+// y procesa el borrado en el acto. La eliminación local siempre se completa;
+// si S3 falla, el ciclo de IntervaloS3 reintenta.
 func (me *GestorBorde) EliminarSerie(path string) error {
 	// Verificar que la serie existe
 	me.cache.mu.RLock()
@@ -1088,8 +1091,10 @@ func (me *GestorBorde) EliminarSerie(path string) error {
 
 	log.Printf("Serie eliminada localmente: %s (ID: %d, bloques eliminados: %d)", path, serieId, len(clavesAEliminar))
 
-	// La eliminación de S3 la procesa el ciclo de S3, en el intervalo de IntervaloS3.
-	// La eliminación pendiente ya fue registrada en el paso 1 (si S3 estaba configurado).
+	me.informarCatalogoS3("eliminación de serie")
+	if err := me.procesarEliminacionesPendientes(); err != nil {
+		log.Printf("Advertencia: error eliminando serie de S3: %v", err)
+	}
 
 	return nil
 }

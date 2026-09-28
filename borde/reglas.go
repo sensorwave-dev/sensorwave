@@ -786,6 +786,9 @@ func (mr *MotorReglas) AgregarRegla(regla *Regla) error {
 
 	log.Printf("Regla '%s' agregada exitosamente", regla.ID)
 
+	if mr.gestor != nil {
+		mr.gestor.informarCatalogoS3("regla nueva")
+	}
 	return nil
 }
 
@@ -804,6 +807,9 @@ func (mr *MotorReglas) EliminarRegla(id string) error {
 
 	log.Printf("Regla '%s' eliminada", id)
 
+	if mr.gestor != nil {
+		mr.gestor.informarCatalogoS3("eliminación de regla")
+	}
 	return nil
 }
 
@@ -835,6 +841,9 @@ func (mr *MotorReglas) ActualizarRegla(regla *Regla) error {
 
 	log.Printf("Regla '%s' actualizada", regla.ID)
 
+	if mr.gestor != nil {
+		mr.gestor.informarCatalogoS3("regla actualizada")
+	}
 	return nil
 }
 
@@ -842,10 +851,10 @@ func (mr *MotorReglas) ActualizarRegla(regla *Regla) error {
 // Actualiza el campo Activa y persiste el cambio en la base de datos
 func (mr *MotorReglas) HabilitarRegla(id string, habilitada bool) error {
 	mr.mu.Lock()
-	defer mr.mu.Unlock()
 
 	regla, existe := mr.reglas[id]
 	if !existe {
+		mr.mu.Unlock()
 		return fmt.Errorf("regla '%s' no encontrada", id)
 	}
 
@@ -857,6 +866,7 @@ func (mr *MotorReglas) HabilitarRegla(id string, habilitada bool) error {
 		clave := generarClaveRegla(id)
 		reglaBytes, err := serializarRegla(regla)
 		if err != nil {
+			mr.mu.Unlock()
 			return fmt.Errorf("error al serializar regla: %v", err)
 		}
 
@@ -864,9 +874,11 @@ func (mr *MotorReglas) HabilitarRegla(id string, habilitada bool) error {
 		if err != nil {
 			// Revertir el cambio en memoria en caso de error
 			regla.Activa = !habilitada
+			mr.mu.Unlock()
 			return fmt.Errorf("error al actualizar estado de regla en DB: %v", err)
 		}
 	}
+	mr.mu.Unlock()
 
 	estado := "habilitada"
 	if !habilitada {
@@ -874,5 +886,8 @@ func (mr *MotorReglas) HabilitarRegla(id string, habilitada bool) error {
 	}
 	log.Printf("Regla '%s' %s", id, estado)
 
+	if mr.gestor != nil {
+		mr.gestor.informarCatalogoS3("cambio de estado de regla")
+	}
 	return nil
 }

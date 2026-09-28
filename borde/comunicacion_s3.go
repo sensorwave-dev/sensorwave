@@ -13,8 +13,20 @@ import (
 	"github.com/sensorwave-dev/sensorwave/tipos"
 )
 
+// informarCatalogoS3 sube nodos/{id}.json después de un cambio de catálogo.
+// Si S3 no está configurado o la subida falla, el cambio local se conserva.
+// El ciclo de IntervaloS3 reintenta esa subida.
+func (me *GestorBorde) informarCatalogoS3(motivo string) {
+	if clienteS3 == nil {
+		return
+	}
+	if err := me.registrarEnS3(); err != nil {
+		log.Printf("Advertencia: error informando %s en S3: %v", motivo, err)
+	}
+}
+
 // registrarEnS3 sube el nodo, sus series y sus reglas a S3.
-// Lo llama el ciclo de S3 al arrancar y en cada vuelta.
+// Lo llaman los cambios de catálogo y, si esa subida falla, el ciclo de S3.
 func (me *GestorBorde) registrarEnS3() error {
 	// Verificar que S3 esté configurado
 	if clienteS3 == nil {

@@ -11,14 +11,20 @@ primary_region = 'gru'
   image = 'emqx/nanomq:latest'
 
 [env]
-  NANOMQ_BROKER_URL = 'nmq-tcp://0.0.0.0:1884'
+  NANOMQ_BROKER_URL = 'nmq-tcp://[::]:1884'
+
+# La imagen ignora NANOMQ_BROKER_URL y, con 0.0.0.0, solo abre IPv4.
+# La red privada de Fly es IPv6, así que el listener tiene que ser [::].
+[processes]
+  app = '/usr/local/nanomq/nanomq start --url nmq-tcp://[::]:1884'
 
 [[services]]
-  internal_port = 1884
+internal_port = 1884
   protocol = 'tcp'
   auto_stop_machines = 'off'
   auto_start_machines = true
   min_machines_running = 1
+  processes = ['app']
 
   [[services.ports]]
     port = 1884

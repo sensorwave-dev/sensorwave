@@ -220,9 +220,10 @@ func parsearClaveLocalDatos(clave string) (serieId int, tiempoInicio, tiempoFin 
 	return int(serieId64), tiempoInicio, tiempoFin, nil
 }
 
-// iniciarCicloS3 arranca el único ciclo de S3 cuando Crear dejó un cliente.
-// Registra el nodo al entrar y después en cada vuelta, junto con los borrados
-// pendientes y la migración de bloques. Se detiene al cerrar el gestor.
+// iniciarCicloS3 arranca el reintento de S3 cuando Crear dejó un cliente.
+// La primera vuelta y cada IntervaloS3 vuelven a subir el catálogo por si un
+// aviso inmediato no llegó, y procesan borrados pendientes y migración.
+// Se detiene al cerrar el gestor.
 func (me *GestorBorde) iniciarCicloS3() {
 	me.fondo.Add(1)
 	go func() {
@@ -273,8 +274,9 @@ func (me *GestorBorde) ResumenAlmacenLocal() (bloques int, nbytes int64, ingesta
 	return bloques, nbytes, ingesta, nil
 }
 
-// ejecutarCicloS3 registra el nodo, procesa borrados pendientes y migra bloques.
-// El registro se repite en cada vuelta: si el anterior no llegó, el siguiente lo crea.
+// ejecutarCicloS3 reintenta el catálogo, los borrados pendientes y la migración.
+// El aviso principal ocurre al cambiar series, tags o reglas. Esta vuelta cubre
+// las subidas que fallaron por conectividad.
 func (me *GestorBorde) ejecutarCicloS3() {
 	select {
 	case <-me.finalizado:
@@ -439,7 +441,7 @@ func (me *GestorBorde) eliminarSerieDeS3(serieId int) (int, error) {
 }
 
 // procesarEliminacionesPendientes procesa todas las eliminaciones pendientes de S3.
-// El registro del nodo lo hace ejecutarCicloS3, no esta función.
+// El catálogo lo sube quien llama: el aviso inmediato o el ciclo de reintento.
 func (me *GestorBorde) procesarEliminacionesPendientes() error {
 	// Verificar si el gestor está cerrando
 	select {

@@ -2677,7 +2677,7 @@ func TestEliminarSerie_EliminaMultiplesBloques(t *testing.T) {
 	t.Log("EliminarSerie elimina múltiples bloques correctamente")
 }
 
-// TestEliminarSerie_ConS3 verifica que se registra eliminación pendiente para S3
+// TestEliminarSerie_ConS3 verifica que el borrado de S3 se intenta al momento
 func TestEliminarSerie_ConS3(t *testing.T) {
 	gestor := crearGestorBordeParaTest(t)
 
@@ -2690,7 +2690,8 @@ func TestEliminarSerie_ConS3(t *testing.T) {
 	}()
 
 	mockS3 := &mockClienteS3{
-		putObjectOutput: &s3.PutObjectOutput{},
+		putObjectOutput:   &s3.PutObjectOutput{},
+		listObjectsOutput: &s3.ListObjectsV2Output{},
 	}
 	clienteS3 = mockS3
 	configuracionS3 = tipos.ConfiguracionS3{Bucket: "test-bucket"}
@@ -2709,16 +2710,13 @@ func TestEliminarSerie_ConS3(t *testing.T) {
 	err = gestor.EliminarSerie("sensor/temp")
 	require.NoError(t, err)
 
-	// Verificar que se registró eliminación pendiente (la actualización de S3 es diferida)
+	// El borrado de S3 se intenta al momento. Con la lista vacía el pendiente se cierra.
 	pendientes, err := gestor.cargarEliminacionesPendientes()
 	require.NoError(t, err)
-	assert.Equal(t, 1, len(pendientes), "Debe registrar eliminación pendiente para S3")
-	if len(pendientes) > 0 {
-		assert.Equal(t, "sensor/temp", pendientes[0].Path)
-		assert.Equal(t, 1, pendientes[0].SerieId)
-	}
+	assert.Empty(t, pendientes)
+	assert.GreaterOrEqual(t, mockS3.putObjectCalls, 2)
 
-	t.Log("EliminarSerie registra eliminación pendiente para S3 correctamente")
+	t.Log("EliminarSerie informa el catálogo y procesa el borrado de S3 en el acto")
 }
 
 // TestEliminarSerie_InsercionDespuesDeEliminar verifica que no se puede insertar después de eliminar
