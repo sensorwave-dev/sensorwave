@@ -5,13 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"strings"
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/sensorwave-dev/sensorwave/almacen"
 	pebblemotor "github.com/sensorwave-dev/sensorwave/almacen/pebble"
+	sqlitemotor "github.com/sensorwave-dev/sensorwave/almacen/sqlite"
 	"github.com/sensorwave-dev/sensorwave/compresor"
 	"github.com/sensorwave-dev/sensorwave/tipos"
 )
@@ -21,7 +22,7 @@ type GestorBorde struct {
 	direccion     string            // dirección pública del nodo (registro / ops)
 	brokerMQTT    string            // Broker MQTT para federación con la nube
 	tags          map[string]string // Metadatos libres del nodo (nombre, ubicación, etc.)
-	db            almacen.Motor     // Almacenamiento local del nodo
+	db            almacen.Almacen   // Almacenamiento local del nodo
 	cache         *Cache            // Cache en memoria de configuraciones de series
 	coordinadores sync.Map          // Map de coordinadores de series (gestión de compresión)
 	mu            sync.RWMutex      // Mutex para proteger el contador
@@ -86,126 +87,79 @@ func (cs *CoordinadorSerie) decrementarContador(n int) {
 	}
 }
 
-// escribirPuntoIngesta escribe un punto al espacio de nombres de ingesta de una serie
+// escribirPuntoIngesta persiste un punto en la ingesta de una serie.
 func (me *GestorBorde) escribirPuntoIngesta(serieId int, medicion tipos.Medicion) error {
-	clave := fmt.Sprintf("ingesta/%010d/%020d", serieId, medicion.Tiempo)
 	datos, err := tipos.SerializarGob(medicion)
 	if err != nil {
 		return fmt.Errorf("error al serializar medición: %v", err)
 	}
-	return me.db.Poner([]byte(clave), datos)
+	return me.db.AgregarPunto(almacen.Punto{SerieID: serieId, Tiempo: medicion.Tiempo, Datos: datos})
 }
 
-// leerPuntosIngesta lee los N puntos más antiguos del espacio de nombres de ingesta de una serie
+// leerPuntosIngesta lee los N puntos más antiguos de la ingesta de una serie.
+// Los valores ilegibles se borran y se cuentan en el segundo resultado.
 func (me *GestorBorde) leerPuntosIngesta(serieId int, n int) ([]tipos.Medicion, int, error) {
-	prefijo := fmt.Sprintf("ingesta/%010d/", serieId)
-	iter, err := me.db.Recorrer([]byte(prefijo), []byte(fmt.Sprintf("ingesta/%010d0", serieId)))
+	puntos, err := me.db.PuntosIngestaAntiguos(serieId, n)
 	if err != nil {
 		return nil, 0, err
 	}
-	defer iter.Close()
 
-	var mediciones []tipos.Medicion
-	descartados := 0
-	for iter.First(); iter.Valid() && len(mediciones) < n; iter.Next() {
+	mediciones := make([]tipos.Medicion, 0, len(puntos))
+	var ilegibles []int64
+	for _, punto := range puntos {
 		var medicion tipos.Medicion
-		if err := tipos.DeserializarGob(iter.Value(), &medicion); err != nil {
-			clave := append([]byte(nil), iter.Key()...)
-			log.Printf("Ingesta ilegible %s: %v", clave, err)
-			if errBorrar := me.db.Borrar(clave); errBorrar != nil {
-				log.Printf("Error borrando ingesta ilegible %s: %v", clave, errBorrar)
-			}
-			descartados++
+		if err := tipos.DeserializarGob(punto.Datos, &medicion); err != nil {
+			log.Printf("Ingesta ilegible serie %d tiempo %d: %v", serieId, punto.Tiempo, err)
+			ilegibles = append(ilegibles, punto.Tiempo)
 			continue
 		}
 		mediciones = append(mediciones, medicion)
 	}
-
-	if err := iter.Error(); err != nil {
-		return nil, descartados, err
+	if len(ilegibles) > 0 {
+		if err := me.db.CerrarBloque(almacen.Bloque{SerieID: serieId}, ilegibles); err != nil {
+			log.Printf("Error borrando ingesta ilegible de la serie %d: %v", serieId, err)
+		}
 	}
-
-	return mediciones, descartados, nil
+	return mediciones, len(ilegibles), nil
 }
 
-// leerPuntosIngestaEnRango lee todos los puntos de ingesta de una serie en un rango temporal inclusivo.
+// leerPuntosIngestaEnRango lee los puntos de ingesta de una serie en un rango inclusivo.
 func (me *GestorBorde) leerPuntosIngestaEnRango(serieId int, tiempoInicio, tiempoFin int64) ([]tipos.Medicion, error) {
-	if tiempoInicio > tiempoFin {
-		return []tipos.Medicion{}, nil
-	}
-
-	lowerBound := []byte(fmt.Sprintf("ingesta/%010d/%020d", serieId, tiempoInicio))
-	upperBound := []byte(fmt.Sprintf("ingesta/%010d/%020d~", serieId, tiempoFin))
-
-	iter, err := me.db.Recorrer(lowerBound, upperBound)
+	puntos, err := me.db.PuntosEnRango(serieId, tiempoInicio, tiempoFin)
 	if err != nil {
 		return nil, err
 	}
-	defer iter.Close()
-
-	var mediciones []tipos.Medicion
-	for iter.First(); iter.Valid(); iter.Next() {
+	mediciones := make([]tipos.Medicion, 0, len(puntos))
+	for _, punto := range puntos {
 		var medicion tipos.Medicion
-		if err := tipos.DeserializarGob(iter.Value(), &medicion); err != nil {
+		if err := tipos.DeserializarGob(punto.Datos, &medicion); err != nil {
 			continue
 		}
 		mediciones = append(mediciones, medicion)
 	}
-
-	if err := iter.Error(); err != nil {
-		return nil, err
-	}
-
 	return mediciones, nil
 }
 
-// leerUltimoPuntoIngesta retorna la medicion mas reciente en ingesta para una serie.
+// leerUltimoPuntoIngesta retorna la medición más reciente en ingesta para una serie.
 func (me *GestorBorde) leerUltimoPuntoIngesta(serieId int) (tipos.Medicion, bool, error) {
-	prefijo := fmt.Sprintf("ingesta/%010d/", serieId)
-	iter, err := me.db.Recorrer([]byte(prefijo), []byte(fmt.Sprintf("ingesta/%010d0", serieId)))
-	if err != nil {
+	punto, ok, err := me.db.UltimoPunto(serieId)
+	if err != nil || !ok {
 		return tipos.Medicion{}, false, err
 	}
-	defer iter.Close()
-
-	if !iter.Last() {
-		if err := iter.Error(); err != nil {
-			return tipos.Medicion{}, false, err
-		}
-		return tipos.Medicion{}, false, nil
-	}
-
 	var medicion tipos.Medicion
-	if err := tipos.DeserializarGob(iter.Value(), &medicion); err != nil {
+	if err := tipos.DeserializarGob(punto.Datos, &medicion); err != nil {
 		return tipos.Medicion{}, false, err
 	}
-
 	return medicion, true, nil
 }
 
-// eliminarPuntosIngesta elimina un conjunto de puntos del espacio de nombres de ingesta usando un lote atómico.
-func (me *GestorBorde) eliminarPuntosIngesta(serieId int, timestamps []int64) error {
-	claves := make([][]byte, len(timestamps))
-	for i, timestamp := range timestamps {
-		claves[i] = []byte(fmt.Sprintf("ingesta/%010d/%020d", serieId, timestamp))
-	}
-	return me.db.BorrarVarias(claves)
-}
-
-// contarPuntosIngesta cuenta los puntos en el espacio de nombres de ingesta de una serie
+// contarPuntosIngesta cuenta los puntos en la ingesta de una serie.
 func (me *GestorBorde) contarPuntosIngesta(serieId int) int {
-	prefijo := fmt.Sprintf("ingesta/%010d/", serieId)
-	iter, err := me.db.Recorrer([]byte(prefijo), []byte(fmt.Sprintf("ingesta/%010d0", serieId)))
+	puntos, err := me.db.PuntosEnRango(serieId, math.MinInt64, math.MaxInt64)
 	if err != nil {
 		return 0
 	}
-	defer iter.Close()
-
-	count := 0
-	for iter.First(); iter.Valid(); iter.Next() {
-		count++
-	}
-	return count
+	return len(puntos)
 }
 
 // reconstruirContadoresIngesta reconstruye los contadores de ingesta al iniciar
@@ -361,7 +315,7 @@ func (me *GestorBorde) comprimirPuntos(mediciones []tipos.Medicion, serie tipos.
 // ConfigS3 es opcional (nil = modo desconectado sin sincronización con nube).
 type Opciones struct {
 	NombreDB    string                 // Directorio del almacenamiento local (requerido)
-	Motor       string                 // Motor de almacenamiento. Vacío o "pebble" abre Pebble.
+	Motor       string                 // Motor de almacenamiento. Vacío o "pebble" abre Pebble. "sqlite" abre SQLite dentro de ese directorio.
 	Direccion   string                 // Dirección pública del nodo (registro / ops)
 	BrokerMQTT  string                 // Broker MQTT para federación con la nube (requerido solo si ConfigS3 != nil)
 	ConfigS3    *tipos.ConfiguracionS3 // nil = modo local sin nube (debe ser explícito si se usa)
@@ -370,8 +324,8 @@ type Opciones struct {
 }
 
 // abrirMotor abre el almacenamiento indicado en Opciones.
-// Motor vacío equivale a Pebble.
-func abrirMotor(opts Opciones) (almacen.Motor, error) {
+// Motor vacío equivale a Pebble. NombreDB es un directorio en ambos casos.
+func abrirMotor(opts Opciones) (almacen.Almacen, error) {
 	nombre := opts.Motor
 	if nombre == "" {
 		nombre = "pebble"
@@ -379,6 +333,8 @@ func abrirMotor(opts Opciones) (almacen.Motor, error) {
 	switch nombre {
 	case "pebble":
 		return pebblemotor.Abrir(opts.NombreDB)
+	case "sqlite":
+		return sqlitemotor.Abrir(opts.NombreDB)
 	default:
 		return nil, fmt.Errorf("motor de almacenamiento desconocido: %s", nombre)
 	}
@@ -430,63 +386,54 @@ func Crear(opts Opciones) (*GestorBorde, error) {
 	}
 
 	// Cargar o generar nodoID
-	nodoIDBytes, err := db.Obtener([]byte("metadatos/nodo_id"))
-	// Si no existe, generar uno nuevo
-	if errors.Is(err, almacen.ErrNoEncontrado) {
+	nodoID, existeNodo, err := db.ObtenerNodoID()
+	if err != nil {
+		return gestor.abortarCreacion(fmt.Errorf("error al leer nodo_id: %v", err))
+	}
+	if !existeNodo {
 		gestor.nodoID = generarNodoID()
-		err = db.Poner([]byte("metadatos/nodo_id"), []byte(gestor.nodoID))
-		if err != nil {
+		if err = db.GuardarNodoID(gestor.nodoID); err != nil {
 			return gestor.abortarCreacion(fmt.Errorf("error al guardar nodo_id: %v", err))
 		}
 		log.Printf("Nuevo nodoID generado: %s", gestor.nodoID)
-	} else if err != nil {
-		// Error al leer nodoID existente
-		return gestor.abortarCreacion(fmt.Errorf("error al leer nodo_id: %v", err))
 	} else {
-		// Cargar nodoID existente
-		gestor.nodoID = string(nodoIDBytes)
+		gestor.nodoID = nodoID
 		log.Printf("NodoID cargado desde DB: %s", gestor.nodoID)
 	}
 
-	// Cargar o actualizar tags del nodo
-	// Opción A: Si se especifican tags en opciones, sobrescriben los guardados
+	// Cargar o actualizar tags del nodo.
+	// Si se especifican tags en opciones, sobrescriben los guardados.
 	if opts.Tags != nil {
-		// Guardar los nuevos tags
 		tagsBytes, err := tipos.SerializarGob(opts.Tags)
 		if err != nil {
 			return gestor.abortarCreacion(fmt.Errorf("error al serializar tags: %v", err))
 		}
-		err = db.Poner([]byte("metadatos/tags"), tagsBytes)
-		if err != nil {
+		if err = db.GuardarTagsNodo(tagsBytes); err != nil {
 			return gestor.abortarCreacion(fmt.Errorf("error al guardar tags: %v", err))
 		}
 		gestor.tags = opts.Tags
 		log.Printf("Tags actualizados: %v", opts.Tags)
 	} else {
-		// Cargar tags existentes desde PebbleDB
-		tagsBytes, err := db.Obtener([]byte("metadatos/tags"))
-		if err == nil {
+		tagsBytes, ok, err := db.ObtenerTagsNodo()
+		if err != nil {
+			return gestor.abortarCreacion(fmt.Errorf("error al leer tags: %v", err))
+		}
+		if ok {
 			var tagsGuardados map[string]string
 			if err := tipos.DeserializarGob(tagsBytes, &tagsGuardados); err == nil {
 				gestor.tags = tagsGuardados
 				log.Printf("Tags cargados desde DB: %v", tagsGuardados)
 			}
-		} else if !errors.Is(err, almacen.ErrNoEncontrado) {
-			return gestor.abortarCreacion(fmt.Errorf("error al leer tags: %v", err))
 		}
-		// Si no hay tags guardados, gestor.tags queda nil (ya asignado arriba)
 	}
 
-	// Cargar contador de series desde PebbleDB
-	contadorBytes, err := db.Obtener([]byte("metadatos/contador"))
-	if err != nil && !errors.Is(err, almacen.ErrNoEncontrado) {
+	// Cargar el contador de SerieId del nodo.
+	contadorBytes, okContador, err := db.ObtenerContador()
+	if err != nil {
 		return gestor.abortarCreacion(fmt.Errorf("error al leer contador: %v", err))
 	}
-	if err == nil {
-		// Cargar contador existente
-		if len(contadorBytes) >= 4 {
-			gestor.contador = int(binary.LittleEndian.Uint32(contadorBytes))
-		}
+	if okContador && len(contadorBytes) >= 4 {
+		gestor.contador = int(binary.LittleEndian.Uint32(contadorBytes))
 	}
 
 	// Cargar series existentes desde PebbleDB
@@ -601,25 +548,21 @@ func (me *GestorBorde) ObtenerTags() map[string]string {
 	return me.tags
 }
 
-// ActualizarTags actualiza los tags del nodo y los persiste en PebbleDB.
+// ActualizarTags actualiza los tags del nodo y los persiste.
 // Si tags es nil, elimina todos los tags guardados.
 func (me *GestorBorde) ActualizarTags(tags map[string]string) error {
 	if tags == nil {
-		// Eliminar tags de PebbleDB
-		err := me.db.Borrar([]byte("metadatos/tags"))
-		if err != nil && !errors.Is(err, almacen.ErrNoEncontrado) {
+		if err := me.db.GuardarTagsNodo(nil); err != nil {
 			return fmt.Errorf("error al eliminar tags: %v", err)
 		}
 		me.tags = nil
 		log.Printf("Tags eliminados")
 	} else {
-		// Guardar nuevos tags
 		tagsBytes, err := tipos.SerializarGob(tags)
 		if err != nil {
 			return fmt.Errorf("error al serializar tags: %v", err)
 		}
-		err = me.db.Poner([]byte("metadatos/tags"), tagsBytes)
-		if err != nil {
+		if err = me.db.GuardarTagsNodo(tagsBytes); err != nil {
 			return fmt.Errorf("error al guardar tags: %v", err)
 		}
 		me.tags = tags
@@ -630,30 +573,23 @@ func (me *GestorBorde) ActualizarTags(tags map[string]string) error {
 	return nil
 }
 
-// cargarSeriesExistentes carga todas las series desde PebbleDB al cache
+// cargarSeriesExistentes carga todas las series al cache.
 func (me *GestorBorde) cargarSeriesExistentes() error {
-	iter, err := me.db.Recorrer([]byte("series/"), []byte("series0"))
+	iter, err := me.db.ListarSeries()
 	if err != nil {
 		return err
 	}
 	defer iter.Close()
 
-	for iter.First(); iter.Valid(); iter.Next() {
-		clave := string(iter.Key())
-		if !strings.HasPrefix(clave, "series/") {
-			continue
-		}
-
-		// Extraer path de la clave
-		seriesPath := strings.TrimPrefix(clave, "series/")
+	for iter.Siguiente() {
+		seriesPath := iter.Clave()
 		if seriesPath == "" {
 			continue
 		}
 
-		// Deserializar configuración de serie
 		var config tipos.Serie
-		if err := tipos.DeserializarGob(iter.Value(), &config); err != nil {
-			continue // Skip series con error de deserialización
+		if err := tipos.DeserializarGob(iter.Valor(), &config); err != nil {
+			continue
 		}
 
 		// Inicializar Tags si es nil
@@ -775,13 +711,12 @@ func (me *GestorBorde) CrearSerie(config tipos.Serie) error {
 		return nil
 	}
 
-	clave := []byte("series/" + serieClave)
-	_, err := me.db.Obtener(clave)
-	if err == nil {
-		return nil
-	}
-	if !errors.Is(err, almacen.ErrNoEncontrado) {
+	_, existeEnDisco, err := me.db.ObtenerSerie(serieClave)
+	if err != nil {
 		return fmt.Errorf("error al verificar serie: %v", err)
+	}
+	if existeEnDisco {
+		return nil
 	}
 
 	me.contador++
@@ -789,19 +724,15 @@ func (me *GestorBorde) CrearSerie(config tipos.Serie) error {
 
 	contadorBytes := make([]byte, 4)
 	binary.LittleEndian.PutUint32(contadorBytes, uint32(me.contador))
-	err = me.db.Poner([]byte("metadatos/contador"), contadorBytes)
-	if err != nil {
+	if err = me.db.GuardarContador(contadorBytes); err != nil {
 		return fmt.Errorf("error al actualizar contador: %v", err)
 	}
 
-	// Serializar y guardar configuración de serie
 	serieBytes, err := tipos.SerializarGob(config)
 	if err != nil {
 		return fmt.Errorf("error al serializar serie: %v", err)
 	}
-
-	err = me.db.Poner(clave, serieBytes)
-	if err != nil {
+	if err = me.db.GuardarSerie(serieClave, serieBytes); err != nil {
 		return fmt.Errorf("error al guardar serie: %v", err)
 	}
 
@@ -881,9 +812,14 @@ func (me *GestorBorde) compactarUnBloque(cs *CoordinadorSerie) bool {
 
 	tiempoInicio := puntos[0].Tiempo
 	tiempoFinal := puntos[len(puntos)-1].Tiempo
-	clave := generarClaveDatos(cs.serie.SerieId, tiempoInicio, tiempoFinal)
-	if err = me.db.Poner(clave, bloqueComprimido); err != nil {
-		fmt.Printf("Error al escribir bloque para serie %s: %v\n", cs.serie.Path, err)
+	timestamps := extraerTimestamps(puntos)
+	if err = me.db.CerrarBloque(almacen.Bloque{
+		SerieID: cs.serie.SerieId,
+		Inicio:  tiempoInicio,
+		Fin:     tiempoFinal,
+		Datos:   bloqueComprimido,
+	}, timestamps); err != nil {
+		fmt.Printf("Error al cerrar bloque para serie %s: %v\n", cs.serie.Path, err)
 		return false
 	}
 
@@ -892,11 +828,6 @@ func (me *GestorBorde) compactarUnBloque(cs *CoordinadorSerie) bool {
 		"Tiempo final:", tiempoFinal,
 		"Mediciones:", len(puntos),
 		"Tamaño comprimido:", len(bloqueComprimido))
-
-	timestamps := extraerTimestamps(puntos)
-	if err := me.eliminarPuntosIngesta(cs.serie.SerieId, timestamps); err != nil {
-		fmt.Printf("Error al eliminar puntos del WAL para serie %s: %v\n", cs.serie.Path, err)
-	}
 
 	cs.decrementarContador(len(puntos))
 	return true
@@ -1033,55 +964,8 @@ func (me *GestorBorde) EliminarSerie(path string) error {
 		me.coordinadores.Delete(path)
 	}
 
-	// 3. Eliminar puntos del WAL
-	prefijoWAL := fmt.Sprintf("ingesta/%010d/", serieId)
-	iterWAL, err := me.db.Recorrer([]byte(prefijoWAL), []byte(fmt.Sprintf("ingesta/%010d0", serieId)))
-	if err != nil {
-		return fmt.Errorf("error al crear iterador para WAL: %v", err)
-	}
-
-	var clavesWAL [][]byte
-	for iterWAL.First(); iterWAL.Valid(); iterWAL.Next() {
-		clave := make([]byte, len(iterWAL.Key()))
-		copy(clave, iterWAL.Key())
-		clavesWAL = append(clavesWAL, clave)
-	}
-	iterWAL.Close()
-
-	for _, clave := range clavesWAL {
-		if err := me.db.Borrar(clave); err != nil {
-			log.Printf("Advertencia: error al eliminar punto WAL %s: %v", string(clave), err)
-		}
-	}
-
-	// 3. Eliminar todos los bloques de datos de PebbleDB
-	prefijoDatos := fmt.Sprintf("datos/%010d/", serieId)
-
-	iter, err := me.db.Recorrer([]byte(prefijoDatos), []byte(fmt.Sprintf("datos/%010d0", serieId)))
-	if err != nil {
-		return fmt.Errorf("error al crear iterador para datos: %v", err)
-	}
-
-	// Recolectar claves a eliminar
-	var clavesAEliminar [][]byte
-	for iter.First(); iter.Valid(); iter.Next() {
-		clave := make([]byte, len(iter.Key()))
-		copy(clave, iter.Key())
-		clavesAEliminar = append(clavesAEliminar, clave)
-	}
-	iter.Close()
-
-	// Eliminar bloques de datos
-	for _, clave := range clavesAEliminar {
-		if err := me.db.Borrar(clave); err != nil {
-			log.Printf("Advertencia: error al eliminar bloque %s: %v", string(clave), err)
-		}
-	}
-
-	// 4. Eliminar metadatos de la serie
-	claveSerie := []byte("series/" + path)
-	if err := me.db.Borrar(claveSerie); err != nil {
-		return fmt.Errorf("error al eliminar metadatos de serie: %v", err)
+	if err := me.db.BorrarSerie(path, serieId); err != nil {
+		return fmt.Errorf("error al eliminar serie: %v", err)
 	}
 
 	// 5. Eliminar del cache
@@ -1089,7 +973,7 @@ func (me *GestorBorde) EliminarSerie(path string) error {
 	delete(me.cache.datos, path)
 	me.cache.mu.Unlock()
 
-	log.Printf("Serie eliminada localmente: %s (ID: %d, bloques eliminados: %d)", path, serieId, len(clavesAEliminar))
+	log.Printf("Serie eliminada localmente: %s (ID: %d)", path, serieId)
 
 	me.informarCatalogoS3("eliminación de serie")
 	if err := me.procesarEliminacionesPendientes(); err != nil {

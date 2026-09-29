@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sensorwave-dev/sensorwave/almacen"
 	"github.com/sensorwave-dev/sensorwave/tipos"
 )
 
@@ -119,38 +120,24 @@ func (me *GestorBorde) consultarRangoSerie(serie tipos.Serie, tiempoInicio, tiem
 
 	var resultados []tipos.Medicion
 
-	// Crear rangos de búsqueda para iterar sobre los datos de la serie
-	keyPrefix := fmt.Sprintf("datos/%010d/", serie.SerieId)
-	lowerBound := []byte(keyPrefix)
-	upperBound := []byte(keyPrefix + "~") // '~' es mayor que todos los números
-
-	iter, err := me.db.Recorrer(lowerBound, upperBound)
+	iter, err := me.db.BloquesEnRango(serie.SerieId, tiempoInicioUnix, tiempoFinUnix)
 	if err != nil {
 		return nil, fmt.Errorf("error al crear iterador: %v", err)
 	}
 	defer iter.Close()
 
-	// Iterar sobre todos los bloques de la serie
-	for iter.First(); iter.Valid(); iter.Next() {
-		clave := string(iter.Key())
-
-		// Extraer timestamps del rango del bloque desde la clave para skip temprano
-		// Formato: data/XXXXXXXXXX/TTTTTTTTTTTTTTTTTTTT_TTTTTTTTTTTTTTTTTTTT
-		if skipBloque := me.deberiaOmitirBloque(clave, tiempoInicioUnix, tiempoFinUnix); skipBloque {
-			continue // Skip este bloque sin descomprimirlo
+	for iter.Siguiente() {
+		bloque := iter.Bloque()
+		if bloque.Fin < tiempoInicioUnix || bloque.Inicio > tiempoFinUnix {
+			continue
 		}
 
-		datosComprimidos := make([]byte, len(iter.Value()))
-		copy(datosComprimidos, iter.Value())
-
-		// Descomprimir el bloque
-		mediciones, err := me.descomprimirBloque(datosComprimidos, serie)
+		mediciones, err := me.descomprimirBloque(bloque.Datos, serie)
 		if err != nil {
 			fmt.Printf("Error al descomprimir bloque: %v\n", err)
 			continue
 		}
 
-		// Filtrar mediciones que están dentro del rango solicitado
 		for _, medicion := range mediciones {
 			if medicion.Tiempo >= tiempoInicioUnix && medicion.Tiempo <= tiempoFinUnix {
 				resultados = append(resultados, medicion)
@@ -281,13 +268,13 @@ func (me *GestorBorde) consultarUltimoPuntoSerie(serie tipos.Serie, tiempoInicio
 		return tipos.Medicion{}, err
 	}
 
-	claveBloque, finBloque, hayBloque, err := me.bloqueDeMayorFin(serie.SerieId)
+	bloque, hayBloque, err := me.bloqueDeMayorFin(serie.SerieId)
 	if err != nil {
 		return tipos.Medicion{}, err
 	}
 
-	if hayBloque && (!hayIngesta || finBloque > ultimaIngesta.Tiempo) {
-		return me.puntoDelBloque(claveBloque, serie)
+	if hayBloque && (!hayIngesta || bloque.Fin > ultimaIngesta.Tiempo) {
+		return me.puntoDelBloque(bloque.Datos, serie)
 	}
 	if hayIngesta {
 		return ultimaIngesta, nil
@@ -295,57 +282,30 @@ func (me *GestorBorde) consultarUltimoPuntoSerie(serie tipos.Serie, tiempoInicio
 	return tipos.Medicion{}, fmt.Errorf("no hay mediciones para la serie: %s", serie.Path)
 }
 
-// bloqueDeMayorFin recorre las claves de bloque sin abrirlas y devuelve la de mayor fin.
-func (me *GestorBorde) bloqueDeMayorFin(serieId int) (string, int64, bool, error) {
-	prefijo := fmt.Sprintf("datos/%010d/", serieId)
-	iter, err := me.db.Recorrer([]byte(prefijo), []byte(prefijo+"~"))
+// bloqueDeMayorFin devuelve el bloque cuyo fin es el mayor.
+func (me *GestorBorde) bloqueDeMayorFin(serieId int) (almacen.Bloque, bool, error) {
+	iter, err := me.db.BloquesEnRango(serieId, math.MinInt64, math.MaxInt64)
 	if err != nil {
-		return "", 0, false, fmt.Errorf("error al crear iterador: %v", err)
+		return almacen.Bloque{}, false, fmt.Errorf("error al crear iterador: %v", err)
 	}
 	defer iter.Close()
 
-	var mejorClave string
-	var mejorFin int64
+	var mejor almacen.Bloque
 	hay := false
-	for iter.First(); iter.Valid(); iter.Next() {
-		clave := string(iter.Key())
-		fin, ok := finDeClaveBloque(clave)
-		if !ok {
-			continue
-		}
-		if !hay || fin > mejorFin {
+	for iter.Siguiente() {
+		bloque := iter.Bloque()
+		if !hay || bloque.Fin > mejor.Fin {
 			hay = true
-			mejorFin = fin
-			mejorClave = clave
+			mejor = bloque
 		}
 	}
 	if err := iter.Error(); err != nil {
-		return "", 0, false, err
+		return almacen.Bloque{}, false, err
 	}
-	return mejorClave, mejorFin, hay, nil
+	return mejor, hay, nil
 }
 
-func finDeClaveBloque(clave string) (int64, bool) {
-	partes := strings.Split(clave, "/")
-	if len(partes) != 3 {
-		return 0, false
-	}
-	tiempos := strings.Split(partes[2], "_")
-	if len(tiempos) != 2 {
-		return 0, false
-	}
-	fin, err := strconv.ParseInt(tiempos[1], 10, 64)
-	if err != nil {
-		return 0, false
-	}
-	return fin, true
-}
-
-func (me *GestorBorde) puntoDelBloque(clave string, serie tipos.Serie) (tipos.Medicion, error) {
-	datos, err := me.db.Obtener([]byte(clave))
-	if err != nil {
-		return tipos.Medicion{}, fmt.Errorf("error al leer bloque: %v", err)
-	}
+func (me *GestorBorde) puntoDelBloque(datos []byte, serie tipos.Serie) (tipos.Medicion, error) {
 	mediciones, err := me.descomprimirBloque(datos, serie)
 	if err != nil {
 		return tipos.Medicion{}, fmt.Errorf("error al descomprimir último bloque: %v", err)

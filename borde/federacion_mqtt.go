@@ -1,6 +1,7 @@
 package borde
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -80,7 +81,12 @@ func (f *federacionMQTT) cerrar() {
 }
 
 // manejarMensaje despacha mensajes del plano de control según el tópico.
+// Acusa el mensaje al entrar: con el orden por defecto de Paho el PUBACK de
+// una solicitud QoS 1 no sale hasta que este callback termina, y publicar la
+// respuesta esperando el acuse desde aquí deja la consulta bloqueada.
 func (f *federacionMQTT) manejarMensaje(_ mqtt.Client, msg mqtt.Message) {
+	msg.Ack()
+
 	partes := splitTopic(msg.Topic())
 	if len(partes) != 6 {
 		return
@@ -93,7 +99,8 @@ func (f *federacionMQTT) manejarMensaje(_ mqtt.Client, msg mqtt.Message) {
 
 	switch partes[4] {
 	case "solicitud":
-		f.manejarConsulta(msg.Payload(), partes[5])
+		payload := bytes.Clone(msg.Payload())
+		go f.manejarConsulta(payload, partes[5])
 	case "cancelar":
 		f.manejarCancelacion(partes[5])
 	}

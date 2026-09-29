@@ -1,6 +1,7 @@
 # Broker MQTT de federación (NanoMQ).
 # DNS privado: sensorwave-mqtt.internal:1884
-# TCP público: sensorwave-mqtt.fly.dev:1884
+# Público: tcp://149.248.204.228:1884
+# TCP en crudo, sin el proxy TLS de Fly.
 #
 # See https://fly.io/docs/reference/configuration/
 
@@ -19,7 +20,7 @@ primary_region = 'gru'
   app = '/usr/local/nanomq/nanomq start --url nmq-tcp://[::]:1884'
 
 [[services]]
-internal_port = 1884
+  internal_port = 1884
   protocol = 'tcp'
   auto_stop_machines = 'off'
   auto_start_machines = true

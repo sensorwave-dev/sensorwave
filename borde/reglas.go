@@ -96,8 +96,8 @@ type MotorReglas struct {
 	ejecutores map[string]EjecutorAccion
 	habilitado bool
 	mu         sync.RWMutex
-	gestor     *GestorBorde  // Referencia al gestor padre (para acceso a datos)
-	db         almacen.Motor // Persistencia de reglas
+	gestor     *GestorBorde    // Referencia al gestor padre (para acceso a datos)
+	db         almacen.Almacen // Persistencia de reglas
 }
 
 // EstadoMotorReglas contiene información sobre el estado actual del motor de reglas
@@ -126,7 +126,7 @@ func (mr *MotorReglas) ObtenerEstado() EstadoMotorReglas {
 	}
 }
 
-func nuevoMotorReglasIntegrado(gestor *GestorBorde, db almacen.Motor) *MotorReglas {
+func nuevoMotorReglasIntegrado(gestor *GestorBorde, db almacen.Almacen) *MotorReglas {
 	motor := &MotorReglas{
 		reglas:     make(map[string]*Regla),
 		ejecutores: make(map[string]EjecutorAccion),
@@ -739,14 +739,14 @@ func (mr *MotorReglas) cargarReglasExistentes() error {
 		return nil
 	}
 
-	iter, err := mr.db.Recorrer([]byte("reglas/"), []byte("reglas0"))
+	iter, err := mr.db.ListarReglas()
 	if err != nil {
 		return err
 	}
 	defer iter.Close()
 
-	for iter.First(); iter.Valid(); iter.Next() {
-		regla, err := deserializarRegla(iter.Value())
+	for iter.Siguiente() {
+		regla, err := deserializarRegla(iter.Valor())
 		if err != nil {
 			continue
 		}
@@ -767,13 +767,12 @@ func (mr *MotorReglas) AgregarRegla(regla *Regla) error {
 	}
 
 	if mr.db != nil {
-		clave := generarClaveRegla(regla.ID)
 		reglaBytes, err := serializarRegla(regla)
 		if err != nil {
 			return fmt.Errorf("error al serializar regla: %v", err)
 		}
 
-		err = mr.db.Poner(clave, reglaBytes)
+		err = mr.db.GuardarRegla(regla.ID, reglaBytes)
 		if err != nil {
 			return fmt.Errorf("error al guardar regla: %v", err)
 		}
@@ -794,8 +793,7 @@ func (mr *MotorReglas) AgregarRegla(regla *Regla) error {
 
 func (mr *MotorReglas) EliminarRegla(id string) error {
 	if mr.db != nil {
-		clave := generarClaveRegla(id)
-		err := mr.db.Borrar(clave)
+		err := mr.db.BorrarRegla(id)
 		if err != nil {
 			return fmt.Errorf("error al eliminar regla de DB: %v", err)
 		}
@@ -823,13 +821,12 @@ func (mr *MotorReglas) ActualizarRegla(regla *Regla) error {
 	}
 
 	if mr.db != nil {
-		clave := generarClaveRegla(regla.ID)
 		reglaBytes, err := serializarRegla(regla)
 		if err != nil {
 			return fmt.Errorf("error al serializar regla: %v", err)
 		}
 
-		err = mr.db.Poner(clave, reglaBytes)
+		err = mr.db.GuardarRegla(regla.ID, reglaBytes)
 		if err != nil {
 			return fmt.Errorf("error al actualizar regla en DB: %v", err)
 		}
@@ -863,14 +860,13 @@ func (mr *MotorReglas) HabilitarRegla(id string, habilitada bool) error {
 
 	// Persistir el cambio en la base de datos
 	if mr.db != nil {
-		clave := generarClaveRegla(id)
 		reglaBytes, err := serializarRegla(regla)
 		if err != nil {
 			mr.mu.Unlock()
 			return fmt.Errorf("error al serializar regla: %v", err)
 		}
 
-		err = mr.db.Poner(clave, reglaBytes)
+		err = mr.db.GuardarRegla(id, reglaBytes)
 		if err != nil {
 			// Revertir el cambio en memoria en caso de error
 			regla.Activa = !habilitada

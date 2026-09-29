@@ -5,12 +5,14 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/sensorwave-dev/sensorwave/almacen"
 	"github.com/sensorwave-dev/sensorwave/tipos"
 )
 
@@ -87,79 +89,45 @@ func (me *GestorBorde) migrarPorTiempoAlmacenamiento() error {
 	for _, serie := range seriesConTiempo {
 		tiempoLimite := ahora - serie.TiempoAlmacenamiento
 
-		// Construir prefijo para buscar bloques de esta serie
-		prefijo := fmt.Sprintf("datos/%010d/", serie.SerieId)
-
-		iter, err := me.db.Recorrer([]byte(prefijo), []byte(prefijo[:len(prefijo)-1]+"0"))
+		iter, err := me.db.BloquesEnRango(serie.SerieId, math.MinInt64, math.MaxInt64)
 		if err != nil {
 			log.Printf("Error creando iterador para serie %s: %v", serie.Path, err)
 			continue
 		}
 
-		// Recolectar claves a migrar (no podemos modificar durante iteración)
-		clavesAMigrar := make([][]byte, 0)
-		valoresAMigrar := make([][]byte, 0)
-
-		for iter.First(); iter.Valid(); iter.Next() {
-			clave := string(iter.Key())
-
-			// Parsear tiempoFin de la clave
-			tiempoFin, err := parsearTiempoFinDeClave(clave)
-			if err != nil {
-				continue
-			}
-
-			// Si el bloque es más antiguo que el límite, marcarlo para migración
-			if tiempoFin < tiempoLimite {
-				// Copiar clave y valor
-				claveBytes := make([]byte, len(iter.Key()))
-				copy(claveBytes, iter.Key())
-				valorBytes := make([]byte, len(iter.Value()))
-				copy(valorBytes, iter.Value())
-
-				clavesAMigrar = append(clavesAMigrar, claveBytes)
-				valoresAMigrar = append(valoresAMigrar, valorBytes)
+		var aMigrar []almacen.Bloque
+		for iter.Siguiente() {
+			bloque := iter.Bloque()
+			if bloque.Fin < tiempoLimite {
+				aMigrar = append(aMigrar, bloque)
 			}
 		}
 		iter.Close()
 
-		// Migrar bloques recolectados
-		for i, clave := range clavesAMigrar {
-			valor := valoresAMigrar[i]
+		for _, bloque := range aMigrar {
+			nombreArchivo := tipos.GenerarClaveS3Datos(me.nodoID, bloque.SerieID, bloque.Inicio, bloque.Fin)
 
-			// Extraer serieId y tiempos de la clave local para generar clave S3
-			serieId, tiempoInicio, tiempoFin, err := parsearClaveLocalDatos(string(clave))
-			if err != nil {
-				log.Printf("Advertencia: clave con formato inválido %s: %v", string(clave), err)
-				continue
-			}
-
-			// Crear nombre de archivo en S3 con formato optimizado
-			nombreArchivo := tipos.GenerarClaveS3Datos(me.nodoID, serieId, tiempoInicio, tiempoFin)
-
-			// Subir a S3
 			_, err = clienteS3.PutObject(ctx, &s3.PutObjectInput{
 				Bucket: aws.String(configuracionS3.Bucket),
 				Key:    aws.String(nombreArchivo),
-				Body:   bytes.NewReader(valor),
+				Body:   bytes.NewReader(bloque.Datos),
 			})
 			if err != nil {
-				log.Printf("Error subiendo bloque a S3 (clave: %s): %v", string(clave), err)
+				log.Printf("Error subiendo bloque a S3 (serie %d, %d-%d): %v", bloque.SerieID, bloque.Inicio, bloque.Fin, err)
 				continue
 			}
 			contadorMigrados++
 
-			// Eliminar de PebbleDB después de migrar exitosamente
-			err = me.db.Borrar(clave)
+			err = me.db.BorrarBloque(bloque.SerieID, bloque.Inicio, bloque.Fin)
 			if err != nil {
-				log.Printf("Error eliminando bloque migrado de PebbleDB: %v", err)
+				log.Printf("Error eliminando bloque migrado: %v", err)
 				continue
 			}
 			contadorEliminados++
 		}
 
-		if len(clavesAMigrar) > 0 {
-			log.Printf("Serie '%s': %d bloques migrados a S3", serie.Path, len(clavesAMigrar))
+		if len(aMigrar) > 0 {
+			log.Printf("Serie '%s': %d bloques migrados a S3", serie.Path, len(aMigrar))
 		}
 	}
 
@@ -187,37 +155,6 @@ func parsearTiempoFinDeClave(clave string) (int64, error) {
 	}
 
 	return tiempoFin, nil
-}
-
-// parsearClaveLocalDatos extrae serieId, tiempoInicio y tiempoFin de una clave local de PebbleDB
-// Formato: datos/{serieId}/{tiempoInicio}_{tiempoFin}
-func parsearClaveLocalDatos(clave string) (serieId int, tiempoInicio, tiempoFin int64, err error) {
-	partes := strings.Split(clave, "/")
-	if len(partes) != 3 || partes[0] != "datos" {
-		return 0, 0, 0, fmt.Errorf("formato de clave local inválido: %s", clave)
-	}
-
-	serieId64, err := strconv.ParseInt(strings.TrimLeft(partes[1], "0"), 10, 32)
-	if err != nil && partes[1] != "0000000000" {
-		return 0, 0, 0, fmt.Errorf("error parseando serieId: %v", err)
-	}
-
-	tiempos := strings.Split(partes[2], "_")
-	if len(tiempos) != 2 {
-		return 0, 0, 0, fmt.Errorf("formato de tiempos inválido: %s", partes[2])
-	}
-
-	tiempoInicio, err = strconv.ParseInt(strings.TrimLeft(tiempos[0], "0"), 10, 64)
-	if err != nil && tiempos[0] != strings.Repeat("0", 20) {
-		return 0, 0, 0, fmt.Errorf("error parseando tiempoInicio: %v", err)
-	}
-
-	tiempoFin, err = strconv.ParseInt(strings.TrimLeft(tiempos[1], "0"), 10, 64)
-	if err != nil && tiempos[1] != strings.Repeat("0", 20) {
-		return 0, 0, 0, fmt.Errorf("error parseando tiempoFin: %v", err)
-	}
-
-	return int(serieId64), tiempoInicio, tiempoFin, nil
 }
 
 // iniciarCicloS3 arranca el reintento de S3 cuando Crear dejó un cliente.
@@ -256,19 +193,22 @@ func (me *GestorBorde) EjecutarCicloS3() {
 // ResumenAlmacenLocal cuenta los bloques de datos/, sus bytes y los puntos
 // que siguen en ingesta.
 func (me *GestorBorde) ResumenAlmacenLocal() (bloques int, nbytes int64, ingesta int, err error) {
-	iter, err := me.db.Recorrer([]byte("datos/"), []byte("datos0"))
-	if err != nil {
-		return 0, 0, 0, err
-	}
-	for iter.First(); iter.Valid(); iter.Next() {
-		bloques++
-		nbytes += int64(len(iter.Value()))
-	}
-	iter.Close()
-
 	me.cache.mu.RLock()
 	defer me.cache.mu.RUnlock()
 	for _, serie := range me.cache.datos {
+		iter, errIter := me.db.BloquesEnRango(serie.SerieId, math.MinInt64, math.MaxInt64)
+		if errIter != nil {
+			return 0, 0, 0, errIter
+		}
+		for iter.Siguiente() {
+			bloques++
+			nbytes += int64(len(iter.Bloque().Datos))
+		}
+		if errIter = iter.Error(); errIter != nil {
+			iter.Close()
+			return 0, 0, 0, errIter
+		}
+		iter.Close()
 		ingesta += me.contarPuntosIngesta(serie.SerieId)
 	}
 	return bloques, nbytes, ingesta, nil
@@ -330,8 +270,7 @@ func (me *GestorBorde) guardarEliminacionPendiente(serieId int, path string) err
 		return fmt.Errorf("error serializando eliminación pendiente: %v", err)
 	}
 
-	clave := generarClaveEliminacionPendiente(serieId)
-	err = me.db.Poner(clave, datos)
+	err = me.db.GuardarPendiente(serieId, datos)
 	if err != nil {
 		return fmt.Errorf("error guardando eliminación pendiente: %v", err)
 	}
@@ -344,16 +283,16 @@ func (me *GestorBorde) guardarEliminacionPendiente(serieId int, path string) err
 func (me *GestorBorde) cargarEliminacionesPendientes() ([]EliminacionPendiente, error) {
 	var pendientes []EliminacionPendiente
 
-	iter, err := me.db.Recorrer([]byte("pendientes/eliminar/"), []byte("pendientes/eliminar0"))
+	iter, err := me.db.ListarPendientes()
 	if err != nil {
 		return nil, fmt.Errorf("error creando iterador para pendientes: %v", err)
 	}
 	defer iter.Close()
 
-	for iter.First(); iter.Valid(); iter.Next() {
+	for iter.Siguiente() {
 		var pendiente EliminacionPendiente
-		if err := tipos.DeserializarGob(iter.Value(), &pendiente); err != nil {
-			log.Printf("Advertencia: error deserializando pendiente %s: %v", string(iter.Key()), err)
+		if err := tipos.DeserializarGob(iter.Valor(), &pendiente); err != nil {
+			log.Printf("Advertencia: error deserializando pendiente %d: %v", iter.SerieID(), err)
 			continue
 		}
 		pendientes = append(pendientes, pendiente)
@@ -373,14 +312,12 @@ func (me *GestorBorde) actualizarEliminacionPendiente(pendiente EliminacionPendi
 		return fmt.Errorf("error serializando eliminación pendiente: %v", err)
 	}
 
-	clave := generarClaveEliminacionPendiente(pendiente.SerieId)
-	return me.db.Poner(clave, datos)
+	return me.db.GuardarPendiente(pendiente.SerieId, datos)
 }
 
 // eliminarPendienteCompletado elimina una eliminación pendiente de PebbleDB (cuando se completó)
 func (me *GestorBorde) eliminarPendienteCompletado(serieId int) error {
-	clave := generarClaveEliminacionPendiente(serieId)
-	return me.db.Borrar(clave)
+	return me.db.BorrarPendiente(serieId)
 }
 
 // eliminarSerieDeS3 elimina todos los objetos de una serie en S3

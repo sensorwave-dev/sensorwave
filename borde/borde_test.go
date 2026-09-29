@@ -807,10 +807,49 @@ func TestMotorReglas_Concurrencia(t *testing.T) {
 // ============================================================================
 
 // crearDBTemporal crea una base de datos Pebble temporal para testing
-func crearDBTemporal(t *testing.T) almacen.Motor {
+func crearDBTemporal(t *testing.T) almacen.Almacen {
 	db, err := pebblemotor.Abrir(t.TempDir())
 	require.NoError(t, err)
 	return db
+}
+
+func plantarBloque(t *testing.T, db almacen.Almacen, serieID int, inicio, fin int64, datos []byte) {
+	t.Helper()
+	require.NoError(t, db.CerrarBloque(almacen.Bloque{
+		SerieID: serieID,
+		Inicio:  inicio,
+		Fin:     fin,
+		Datos:   datos,
+	}, nil))
+}
+
+func bloquePresente(t *testing.T, db almacen.Almacen, serieID int, inicio, fin int64) bool {
+	t.Helper()
+	iter, err := db.BloquesEnRango(serieID, inicio, fin)
+	require.NoError(t, err)
+	defer iter.Close()
+	for iter.Siguiente() {
+		bloque := iter.Bloque()
+		if bloque.SerieID == serieID && bloque.Inicio == inicio && bloque.Fin == fin {
+			return true
+		}
+	}
+	require.NoError(t, iter.Error())
+	return false
+}
+
+func pendientePresente(t *testing.T, db almacen.Almacen, serieID int) bool {
+	t.Helper()
+	iter, err := db.ListarPendientes()
+	require.NoError(t, err)
+	defer iter.Close()
+	for iter.Siguiente() {
+		if iter.SerieID() == serieID {
+			return true
+		}
+	}
+	require.NoError(t, iter.Error())
+	return false
 }
 
 // ============================================================================
@@ -1268,8 +1307,9 @@ func TestCrearSerie_Exitoso(t *testing.T) {
 	assert.Equal(t, 1, serie.SerieId)
 
 	// Verificar que está en DB
-	_, err = gestor.db.Obtener([]byte("series/sensor/temperatura"))
+	_, ok, err := gestor.db.ObtenerSerie("sensor/temperatura")
 	require.NoError(t, err)
+	require.True(t, ok)
 	t.Log("CrearSerie crea serie exitosamente con persistencia")
 }
 
@@ -1435,10 +1475,7 @@ func TestConsultarRango_ConDatosEnDB(t *testing.T) {
 	// Crear bloque comprimido
 	bloque := crearBloqueComprimidoTest(t, serie, mediciones)
 
-	// Guardar en DB
-	clave := generarClaveDatos(serie.SerieId, ahora-3000, ahora-1000)
-	err := gestor.db.Poner(clave, bloque)
-	require.NoError(t, err)
+	plantarBloque(t, gestor.db, serie.SerieId, ahora-3000, ahora-1000, bloque)
 
 	// Consultar
 	resultado, err := gestor.ConsultarRango("sensor/temp",
@@ -1579,9 +1616,7 @@ func TestConsultarUltimoPunto_DesdeDB(t *testing.T) {
 
 	// Guardar bloque
 	bloque := crearBloqueComprimidoTest(t, serie, mediciones)
-	clave := generarClaveDatos(serie.SerieId, ahora-2000, ahora)
-	err := gestor.db.Poner(clave, bloque)
-	require.NoError(t, err)
+	plantarBloque(t, gestor.db, serie.SerieId, ahora-2000, ahora, bloque)
 
 	// Consultar (sin buffer, nil, nil = sin límites de tiempo)
 	resultado, err := gestor.ConsultarUltimoPunto("sensor/temp", nil, nil)
@@ -1742,8 +1777,7 @@ func TestMigrarPorTiempoAlmacenamiento_MigraBloquesAntiguos(t *testing.T) {
 		{Tiempo: tiempoAntiguo, Valor: float64(20.0)},
 	}
 	bloque := crearBloqueComprimidoTest(t, serie, mediciones)
-	clave := generarClaveDatos(serie.SerieId, tiempoAntiguo, tiempoAntiguo)
-	gestor.db.Poner(clave, bloque)
+	plantarBloque(t, gestor.db, serie.SerieId, tiempoAntiguo, tiempoAntiguo, bloque)
 
 	err := gestor.migrarPorTiempoAlmacenamiento()
 	assert.NoError(t, err)
@@ -1781,13 +1815,11 @@ func TestMigrarPorTiempoAlmacenamiento_FalloPutConservaBloque(t *testing.T) {
 	tiempoAntiguo := time.Now().Add(-2 * time.Hour).UnixNano()
 	mediciones := []tipos.Medicion{{Tiempo: tiempoAntiguo, Valor: float64(20.0)}}
 	bloque := crearBloqueComprimidoTest(t, serie, mediciones)
-	clave := generarClaveDatos(serie.SerieId, tiempoAntiguo, tiempoAntiguo)
-	require.NoError(t, gestor.db.Poner(clave, bloque))
+	plantarBloque(t, gestor.db, serie.SerieId, tiempoAntiguo, tiempoAntiguo, bloque)
 
 	err := gestor.migrarPorTiempoAlmacenamiento()
 	assert.NoError(t, err)
-	_, err = gestor.db.Obtener(clave)
-	assert.NoError(t, err)
+	assert.True(t, bloquePresente(t, gestor.db, serie.SerieId, tiempoAntiguo, tiempoAntiguo))
 }
 
 // ============================================================================
@@ -1819,11 +1851,8 @@ func TestConsultarAgregacion_SerieExacta_Promedio(t *testing.T) {
 		{Tiempo: ahora - 1000, Valor: float64(30.0)},
 	}
 
-	// Guardar bloque
 	bloque := crearBloqueComprimidoTest(t, serie, mediciones)
-	clave := generarClaveDatos(serie.SerieId, ahora-3000, ahora-1000)
-	err := gestor.db.Poner(clave, bloque)
-	require.NoError(t, err)
+	plantarBloque(t, gestor.db, serie.SerieId, ahora-3000, ahora-1000, bloque)
 
 	// Consultar promedio
 	resultado, err := gestor.ConsultarAgregacion(
@@ -1865,8 +1894,7 @@ func TestConsultarAgregacion_SerieExacta_MinMax(t *testing.T) {
 	}
 
 	bloque := crearBloqueComprimidoTest(t, serie, mediciones)
-	clave := generarClaveDatos(serie.SerieId, ahora-3000, ahora-1000)
-	gestor.db.Poner(clave, bloque)
+	plantarBloque(t, gestor.db, serie.SerieId, ahora-3000, ahora-1000, bloque)
 
 	// MIN
 	minResult, err := gestor.ConsultarAgregacion(
@@ -1917,8 +1945,7 @@ func TestConsultarAgregacion_SerieExacta_SumaCount(t *testing.T) {
 	}
 
 	bloque := crearBloqueComprimidoTest(t, serie, mediciones)
-	clave := generarClaveDatos(serie.SerieId, ahora-3000, ahora-1000)
-	gestor.db.Poner(clave, bloque)
+	plantarBloque(t, gestor.db, serie.SerieId, ahora-3000, ahora-1000, bloque)
 
 	// SUM = 60
 	sumaResult, err := gestor.ConsultarAgregacion(
@@ -2011,7 +2038,7 @@ func TestConsultarAgregacion_Patron(t *testing.T) {
 		{Tiempo: ahora - 1000, Valor: float64(20.0)},
 	}
 	bloque1 := crearBloqueComprimidoTest(t, series[0], mediciones1)
-	gestor.db.Poner(generarClaveDatos(1, ahora-2000, ahora-1000), bloque1)
+	plantarBloque(t, gestor.db, 1, ahora-2000, ahora-1000, bloque1)
 
 	// Serie 2: valores 30, 40 → promedio 35
 	mediciones2 := []tipos.Medicion{
@@ -2019,7 +2046,7 @@ func TestConsultarAgregacion_Patron(t *testing.T) {
 		{Tiempo: ahora - 1000, Valor: float64(40.0)},
 	}
 	bloque2 := crearBloqueComprimidoTest(t, series[1], mediciones2)
-	gestor.db.Poner(generarClaveDatos(2, ahora-2000, ahora-1000), bloque2)
+	plantarBloque(t, gestor.db, 2, ahora-2000, ahora-1000, bloque2)
 
 	// Consultar con patrón */temp (wildcard como segmento completo)
 	// Serie 1: promedio 15, Serie 2: promedio 35 (ahora columnar, cada serie tiene su valor)
@@ -2085,8 +2112,7 @@ func TestConsultarAgregacionTemporal_Buckets(t *testing.T) {
 	}
 
 	bloque := crearBloqueComprimidoTest(t, serie, mediciones)
-	clave := generarClaveDatos(serie.SerieId, hace2Horas.UnixNano(), hace1Hora.UnixNano()+2000)
-	gestor.db.Poner(clave, bloque)
+	plantarBloque(t, gestor.db, serie.SerieId, hace2Horas.UnixNano(), hace1Hora.UnixNano()+2000, bloque)
 
 	// Consultar con buckets de 1 hora
 	resultado, err := gestor.ConsultarAgregacionTemporal(
@@ -2134,8 +2160,7 @@ func TestConsultarAgregacionTemporal_IntervaloGrande(t *testing.T) {
 	}
 
 	bloque := crearBloqueComprimidoTest(t, serie, mediciones)
-	clave := generarClaveDatos(serie.SerieId, ahora-3000, ahora-1000)
-	gestor.db.Poner(clave, bloque)
+	plantarBloque(t, gestor.db, serie.SerieId, ahora-3000, ahora-1000, bloque)
 
 	// Intervalo de 1 día para rango de pocos segundos → 1 bucket
 	resultado, err := gestor.ConsultarAgregacionTemporal(
@@ -2262,11 +2287,8 @@ func TestConsultarAgregacion_MultiplesAgregaciones_MinMax(t *testing.T) {
 		{Tiempo: ahora - 1000, Valor: float64(50.0)},
 	}
 
-	// Guardar bloque
 	bloque := crearBloqueComprimidoTest(t, serie, mediciones)
-	clave := generarClaveDatos(serie.SerieId, ahora-5000, ahora-1000)
-	err := gestor.db.Poner(clave, bloque)
-	require.NoError(t, err)
+	plantarBloque(t, gestor.db, serie.SerieId, ahora-5000, ahora-1000, bloque)
 
 	// Consultar min y max en una sola llamada
 	resultado, err := gestor.ConsultarAgregacion(
@@ -2317,9 +2339,7 @@ func TestConsultarAgregacion_MultiplesAgregaciones_Todas(t *testing.T) {
 	}
 
 	bloque := crearBloqueComprimidoTest(t, serie, mediciones)
-	clave := generarClaveDatos(serie.SerieId, ahora-5000, ahora-1000)
-	err := gestor.db.Poner(clave, bloque)
-	require.NoError(t, err)
+	plantarBloque(t, gestor.db, serie.SerieId, ahora-5000, ahora-1000, bloque)
 
 	agregaciones := []tipos.TipoAgregacion{
 		tipos.AgregacionMinimo,
@@ -2368,8 +2388,7 @@ func TestConsultarAgregacion_MultiplesAgregaciones_Wildcard(t *testing.T) {
 		{Tiempo: ahora - 1000, Valor: float64(20.0)},
 	}
 	bloque1 := crearBloqueComprimidoTest(t, serie1, mediciones1)
-	clave1 := generarClaveDatos(serie1.SerieId, ahora-2000, ahora-1000)
-	gestor.db.Poner(clave1, bloque1)
+	plantarBloque(t, gestor.db, serie1.SerieId, ahora-2000, ahora-1000, bloque1)
 
 	// Serie 2: valores 100, 200 (min=100, max=200)
 	mediciones2 := []tipos.Medicion{
@@ -2377,8 +2396,7 @@ func TestConsultarAgregacion_MultiplesAgregaciones_Wildcard(t *testing.T) {
 		{Tiempo: ahora - 1000, Valor: float64(200.0)},
 	}
 	bloque2 := crearBloqueComprimidoTest(t, serie2, mediciones2)
-	clave2 := generarClaveDatos(serie2.SerieId, ahora-2000, ahora-1000)
-	gestor.db.Poner(clave2, bloque2)
+	plantarBloque(t, gestor.db, serie2.SerieId, ahora-2000, ahora-1000, bloque2)
 
 	resultado, err := gestor.ConsultarAgregacion(
 		"dispositivo*/temp",
@@ -2493,15 +2511,17 @@ func TestEliminarSerie_EliminaMetadatosDB(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verificar que está en DB
-	_, err = gestor.db.Obtener([]byte("series/sensor/temp"))
+	_, ok, err := gestor.db.ObtenerSerie("sensor/temp")
 	require.NoError(t, err)
+	require.True(t, ok)
 	// Eliminar serie
 	err = gestor.EliminarSerie("sensor/temp")
 	require.NoError(t, err)
 
 	// Verificar que ya no está en DB
-	_, err = gestor.db.Obtener([]byte("series/sensor/temp"))
-	assert.ErrorIs(t, err, almacen.ErrNoEncontrado, "Metadatos deben ser eliminados de DB")
+	_, ok, err = gestor.db.ObtenerSerie("sensor/temp")
+	require.NoError(t, err)
+	assert.False(t, ok, "Metadatos deben ser eliminados de DB")
 
 	t.Log("EliminarSerie elimina metadatos de PebbleDB correctamente")
 }
@@ -2534,20 +2554,13 @@ func TestEliminarSerie_EliminaDatosDB(t *testing.T) {
 		{Tiempo: ahora - 1000, Valor: float64(21.0)},
 	}
 	bloque := crearBloqueComprimidoTest(t, serieGuardada, mediciones)
-	clave := generarClaveDatos(serieId, ahora-2000, ahora-1000)
-	err = gestor.db.Poner(clave, bloque)
-	require.NoError(t, err)
+	plantarBloque(t, gestor.db, serieId, ahora-2000, ahora-1000, bloque)
+	assert.True(t, bloquePresente(t, gestor.db, serieId, ahora-2000, ahora-1000))
 
-	// Verificar que el bloque existe
-	_, err = gestor.db.Obtener(clave)
-	require.NoError(t, err)
-	// Eliminar serie
 	err = gestor.EliminarSerie("sensor/temp")
 	require.NoError(t, err)
 
-	// Verificar que el bloque fue eliminado
-	_, err = gestor.db.Obtener(clave)
-	assert.ErrorIs(t, err, almacen.ErrNoEncontrado, "Bloques de datos deben ser eliminados")
+	assert.False(t, bloquePresente(t, gestor.db, serieId, ahora-2000, ahora-1000), "Bloques de datos deben ser eliminados")
 
 	t.Log("EliminarSerie elimina bloques de datos de PebbleDB correctamente")
 }
@@ -2615,8 +2628,9 @@ func TestEliminarSerie_NoAfectaOtrasSeries(t *testing.T) {
 	assert.True(t, existe, "Segunda serie debe seguir existiendo")
 
 	// Verificar en DB
-	_, err = gestor.db.Obtener([]byte("series/sensor/temp2"))
+	_, ok, err := gestor.db.ObtenerSerie("sensor/temp2")
 	require.NoError(t, err)
+	require.True(t, ok)
 	t.Log("EliminarSerie no afecta otras series")
 }
 
@@ -2641,37 +2655,31 @@ func TestEliminarSerie_EliminaMultiplesBloques(t *testing.T) {
 	gestor.cache.mu.RUnlock()
 	serieId := serieGuardada.SerieId
 
-	// Crear múltiples bloques
 	ahora := time.Now().UnixNano()
-	var claves [][]byte
+	type tramo struct{ inicio, fin int64 }
+	var tramos []tramo
 
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		tiempoBase := ahora - int64((i+1)*10000)
 		mediciones := []tipos.Medicion{
 			{Tiempo: tiempoBase, Valor: float64(20.0 + float64(i))},
 			{Tiempo: tiempoBase + 1000, Valor: float64(21.0 + float64(i))},
 		}
 		bloque := crearBloqueComprimidoTest(t, serieGuardada, mediciones)
-		clave := generarClaveDatos(serieId, tiempoBase, tiempoBase+1000)
-		claves = append(claves, clave)
-		err := gestor.db.Poner(clave, bloque)
-		require.NoError(t, err)
+		fin := tiempoBase + 1000
+		plantarBloque(t, gestor.db, serieId, tiempoBase, fin, bloque)
+		tramos = append(tramos, tramo{inicio: tiempoBase, fin: fin})
 	}
 
-	// Verificar que todos los bloques existen
-	for _, clave := range claves {
-		_, err := gestor.db.Obtener(clave)
-		require.NoError(t, err)
+	for _, tramo := range tramos {
+		assert.True(t, bloquePresente(t, gestor.db, serieId, tramo.inicio, tramo.fin))
 	}
 
-	// Eliminar serie
 	err = gestor.EliminarSerie("sensor/temp")
 	require.NoError(t, err)
 
-	// Verificar que todos los bloques fueron eliminados
-	for _, clave := range claves {
-		_, err := gestor.db.Obtener(clave)
-		assert.ErrorIs(t, err, almacen.ErrNoEncontrado, "Todos los bloques deben ser eliminados")
+	for _, tramo := range tramos {
+		assert.False(t, bloquePresente(t, gestor.db, serieId, tramo.inicio, tramo.fin), "Todos los bloques deben ser eliminados")
 	}
 
 	t.Log("EliminarSerie elimina múltiples bloques correctamente")
@@ -2822,10 +2830,7 @@ func TestGuardarEliminacionPendiente(t *testing.T) {
 	err := gestor.guardarEliminacionPendiente(123, "sensor/temp")
 	require.NoError(t, err)
 
-	// Verificar que se guardó en DB
-	clave := generarClaveEliminacionPendiente(123)
-	_, err = gestor.db.Obtener(clave)
-	require.NoError(t, err)
+	assert.True(t, pendientePresente(t, gestor.db, 123))
 	t.Log("guardarEliminacionPendiente guarda correctamente en PebbleDB")
 }
 
@@ -2861,10 +2866,7 @@ func TestEliminarPendienteCompletado(t *testing.T) {
 	err = gestor.eliminarPendienteCompletado(123)
 	require.NoError(t, err)
 
-	// Verificar que ya no existe
-	clave := generarClaveEliminacionPendiente(123)
-	_, err = gestor.db.Obtener(clave)
-	assert.ErrorIs(t, err, almacen.ErrNoEncontrado)
+	assert.False(t, pendientePresente(t, gestor.db, 123))
 
 	t.Log("eliminarPendienteCompletado elimina pendiente correctamente")
 }
@@ -3041,7 +3043,7 @@ func TestProcesarEliminacionesPendientes_SinS3(t *testing.T) {
 	// Guardar pendiente manualmente
 	pendiente := EliminacionPendiente{SerieId: 1, Path: "test", MarcaTiempo: time.Now().UnixNano(), Intentos: 0}
 	datos, _ := tipos.SerializarGob(pendiente)
-	gestor.db.Poner(generarClaveEliminacionPendiente(1), datos)
+	require.NoError(t, gestor.db.GuardarPendiente(1, datos))
 
 	// Procesar (no debería hacer nada)
 	err := gestor.procesarEliminacionesPendientes()
